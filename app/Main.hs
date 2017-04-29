@@ -23,6 +23,7 @@ import Servant
 import Servant.Foreign.Internal
 
 import System.Directory
+import System.FilePath.Posix
 
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.AddHeaders
@@ -131,14 +132,14 @@ file url =
 
 data FSObject =
   File {
-    displayName::String,
+    relativePath::String,
     creationDate::DateTime,
     lastModified::DateTime,
     --resourcetype::??
     getcontentlength::Int
     }
   | Folder {
-    displayName::String,
+    relativePath::String,
     resourceType::String,
     contentLength::Int
     }
@@ -147,7 +148,7 @@ getFileObject::FilePath->IO FSObject
 getFileObject filePath =
   return
   File {
-    displayName=filePath,
+    relativePath=filePath,
     creationDate=fromSeconds 0,
     lastModified=fromSeconds 0,
     --resourcetype::??
@@ -157,12 +158,12 @@ getFileObject filePath =
 fsObjectToXml::FSObject->Element
 fsObjectToXml File{..} =
   e "response" [] [
-    te "href" [] $ webBase ++ displayName,
+    te "href" [] $ webBase ++ relativePath,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
         te "creationdate" [] "2017-04-27T08:33:10Z",
-        te "displayname" [] displayName,
+        te "displayname" [] $ takeFileName relativePath,
         te "getlastmodified" [] "Thu, 27 Apr 2017 08:33:10 GMT",
         e "resourcetype" [] [],
         te "getcontentlength" [] "10"
@@ -171,7 +172,7 @@ fsObjectToXml File{..} =
     ]
 fsObjectToXml Folder{..} =
   e "response" [] [
-    te "href" [] $ webBase ++ displayName,
+    te "href" [] $ webBase ++ relativePath,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
@@ -186,7 +187,7 @@ getFolderObject::FilePath->IO FSObject
 getFolderObject filePath =
   return
   Folder {
-    displayName=filePath,
+    relativePath=filePath,
     resourceType="",
     contentLength=10
     }
