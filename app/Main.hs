@@ -9,13 +9,18 @@
 
 module Main where
 
+import Control.Monad.IO.Class
 import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
 import Data.DateTime
 
+import Data.Traversable
+
+import GHC.Stack
+
 import Servant
-import Servant.API
-import Servant.API.ContentTypes
 import Servant.Foreign.Internal
+
+import System.Directory
 
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.AddHeaders
@@ -23,9 +28,9 @@ import Network.Wai.Middleware.RequestLogger
 import Network.Wai.Middleware.Servant.Options
 
 import Text.XML.Light
-import Text.XML.Light.Output
-import Text.XML.Light.Types
 
+webdavBase::FilePath
+webdavBase="/home/jim/webdav"
 
 data DavMethod = MKCOL | PROPFIND | PROPPATCH | LOCK | UNLOCK | ORDERPATCH | COPY | MOVE
 
@@ -68,24 +73,28 @@ type Move = Verb 'MOVE 200
 
 data XML = XML
 
+e::String->[Attr]->[Element]->Element
 e name attrs content = Element{elName=QName{qName=name,qURI=Nothing,qPrefix=Just "D"}, elAttribs=attrs, elContent = map Elem content, elLine=Nothing}
+
+te::String->[Attr]->String->Element
 te name attrs text = Element{elName=QName{qName=name,qURI=Nothing,qPrefix=Just "D"}, elAttribs=attrs, elContent = [Text $ CData CDataText text Nothing], elLine=Nothing}
 
 instance MimeRender XML [Int] where
-  mimeRender proxy items =
+  mimeRender _ _ =
     Lazy.Char8.pack $ showTopElement $ 
     e "multistatus"
     [Attr (unqual "xmlns:D") "DAV:"]
     [folder "/", folder "/aFolder", file "/aFile"]
 
 instance MimeRender XML [FSObject] where
-  mimeRender proxy items =
+  mimeRender _ items =
     Lazy.Char8.pack $ showTopElement $ 
     e "multistatus"
     [Attr (unqual "xmlns:D") "DAV:"]
     $ map fsObjectToXml items
 
 
+folder::String->Element
 folder url = 
   e "response" [] [
     te "href" [] $ "http://127.0.0.1:20001" ++ url,
@@ -99,6 +108,7 @@ folder url =
       ]
     ]
 
+file::String->Element
 file url = 
   e "response" [] [
     te "href" [] $ "http://127.0.0.1:20001" ++ url,
@@ -128,17 +138,18 @@ data FSObject =
     contentLength::Int
     }
 
-getFileObject::FilePath->FSObject
-getFileObject path =
+getFileObject::FilePath->IO FSObject
+getFileObject filePath =
+  return
   File {
-    displayName=path,
+    displayName=filePath,
     creationDate=fromSeconds 0,
     lastModified=fromSeconds 0,
     --resourcetype::??
     getcontentlength=10
     }
 
---fsObjectToXml::FSObject->
+fsObjectToXml::FSObject->Element
 fsObjectToXml File{..} =
   e "response" [] [
     te "href" [] $ "http://127.0.0.1:20001/" ++ displayName,
@@ -146,7 +157,7 @@ fsObjectToXml File{..} =
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
         te "creationdate" [] "2017-04-27T08:33:10Z",
-        te "displayname" [] "aFile",
+        te "displayname" [] displayName,
         te "getlastmodified" [] "Thu, 27 Apr 2017 08:33:10 GMT",
         e "resourcetype" [] [],
         te "getcontentlength" [] "10"
@@ -166,14 +177,26 @@ fsObjectToXml Folder{..} =
       ]
     ]
 
-getFolderObject::FilePath->FSObject
-getFolderObject folder =
+getFolderObject::FilePath->IO FSObject
+getFolderObject filePath =
+  return
   Folder {
-    displayName=folder,
+    displayName=filePath,
     resourceType="",
     contentLength=10
     }
 
+
+getObject::HasCallStack=>FilePath->IO FSObject
+getObject filePath = do
+  let fullPath=webdavBase++filePath
+  isDir <- doesDirectoryExist fullPath
+  isFile <- doesFileExist fullPath
+  case (isDir, isFile) of
+   (False, False) -> error $ "getObject called on an object that doesn't exist: " ++ fullPath
+   (False, True) -> getFileObject fullPath
+   (True, False) -> getFolderObject fullPath
+   (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
 
 
 
@@ -275,12 +298,22 @@ main :: IO ()
 main = run 20001 app1
 
 
---server1 :: Server UserAPI1
+server1::Handler [Int]
 server1 = return users1
 
+server2::Handler String
 server2 = return "qq"
 
-doPropFind = return [getFolderObject "/", getFolderObject "/aFolder", getFileObject "http://127.0.0.1:20001/aFile"]
+doPropFind::Handler [FSObject]
+doPropFind = do
+  fileNames <- liftIO $ getDirectoryContents "/home/jim/webdav"
+
+  objects <- liftIO $ 
+    for (map ("/" ++) fileNames) getObject
+
+  currentDir <- liftIO $ getFolderObject "/"
+    
+  return $ currentDir:objects
 
 users1::[Int]
 users1 = [1,2,3,4]

@@ -25,6 +25,7 @@ executable webdavServer-exe
   build-depends:       base
                      , bytestring
                      , datetime
+                     , directory
                      , servant
                      , servant-foreign
                      , servant-options
