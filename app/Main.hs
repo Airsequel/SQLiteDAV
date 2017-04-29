@@ -199,8 +199,8 @@ getObject filePath = do
   isFile <- doesFileExist fullPath
   case (isDir, isFile) of
    (False, False) -> error $ "getObject called on an object that doesn't exist: " ++ fullPath
-   (False, True) -> getFileObject fullPath
-   (True, False) -> getFolderObject fullPath
+   (False, True) -> getFileObject filePath
+   (True, False) -> getFolderObject filePath
    (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
 
 
@@ -254,7 +254,27 @@ getObject filePath = do
 </d:multistatus>
 -}
 
-    
+{-    
+<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>http://www.ajaxfilebrowser.com/Untitled%20Document</d:href>
+    <d:propstat>
+      <d:status>HTTP/1.1 200 OK</d:status>
+      <d:prop>
+        <d:creationdate>2017-04-29T23:18:05Z</d:creationdate>
+        <d:displayname>Untitled Document</d:displayname>
+        <d:getcontentlength>5</d:getcontentlength>
+        <d:getcontenttype>application/octet-stream</d:getcontenttype>
+        <d:getetag>"4/29/2017 11:18:05 PM-1"</d:getetag>
+        <d:getlastmodified>Sat, 29 Apr 2017 23:18:05 GMT</d:getlastmodified>
+        <d:resourcetype />
+      </d:prop>
+    </d:propstat>
+  </d:response>
+</d:multistatus>
+-}
+
 instance Accept XML where
   contentType _ = "text/xml"
 instance NotFound where
