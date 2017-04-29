@@ -1,0 +1,15 @@
+
+
+function runServerForever {
+  while true
+  do
+    webdavServer-exe
+  done
+}
+
+
+
+
+runServerForever &
+
+stack install --file-watch --exec "killall webdavServer-exe"
