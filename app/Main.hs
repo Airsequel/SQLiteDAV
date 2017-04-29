@@ -29,8 +29,11 @@ import Network.Wai.Middleware.Servant.Options
 
 import Text.XML.Light
 
-webdavBase::FilePath
-webdavBase="/home/jim/webdav"
+fileBase::FilePath
+fileBase="/home/jim/webdav"
+
+webBase::String
+webBase="http://127.0.0.1:20001"
 
 data DavMethod = MKCOL | PROPFIND | PROPPATCH | LOCK | UNLOCK | ORDERPATCH | COPY | MOVE
 
@@ -97,7 +100,7 @@ instance MimeRender XML [FSObject] where
 folder::String->Element
 folder url = 
   e "response" [] [
-    te "href" [] $ "http://127.0.0.1:20001" ++ url,
+    te "href" [] $ webBase ++ url,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
@@ -111,7 +114,7 @@ folder url =
 file::String->Element
 file url = 
   e "response" [] [
-    te "href" [] $ "http://127.0.0.1:20001" ++ url,
+    te "href" [] $ webBase ++ url,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
@@ -152,7 +155,7 @@ getFileObject filePath =
 fsObjectToXml::FSObject->Element
 fsObjectToXml File{..} =
   e "response" [] [
-    te "href" [] $ "http://127.0.0.1:20001/" ++ displayName,
+    te "href" [] $ webBase ++ displayName,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
@@ -166,7 +169,7 @@ fsObjectToXml File{..} =
     ]
 fsObjectToXml Folder{..} =
   e "response" [] [
-    te "href" [] $ "http://127.0.0.1:20001" ++ displayName,
+    te "href" [] $ webBase ++ displayName,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
@@ -189,7 +192,7 @@ getFolderObject filePath =
 
 getObject::HasCallStack=>FilePath->IO FSObject
 getObject filePath = do
-  let fullPath=webdavBase++filePath
+  let fullPath=fileBase++filePath
   isDir <- doesDirectoryExist fullPath
   isFile <- doesFileExist fullPath
   case (isDir, isFile) of
