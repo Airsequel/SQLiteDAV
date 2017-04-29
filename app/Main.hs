@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE
       DataKinds,
       FlexibleInstances,
@@ -13,6 +14,7 @@ import Control.Monad.IO.Class
 import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
 import Data.DateTime
 
+import Data.List
 import Data.Traversable
 
 import GHC.Stack
@@ -258,8 +260,8 @@ instance Accept XML where
 instance NotFound where
   
 type UserAPI1 =
-  Mkcol '[JSON] [Int]
-  :<|> Propfind '[XML] [FSObject]
+  CaptureAll "segments" String :> Mkcol '[JSON] String
+  :<|> CaptureAll "segments" String :> Propfind '[XML] [FSObject]
   :<|> Proppatch '[JSON] [Int]
   :<|> Lock '[JSON] [Int]
   :<|> Unlock '[JSON] [Int]
@@ -267,11 +269,11 @@ type UserAPI1 =
   :<|> Get '[PlainText] String
 --  :<|> Head '[JSON] [Int]
   :<|> Post '[JSON] [Int]
-  :<|> Put '[JSON] [Int]
-  :<|> Delete '[JSON] [Int]
+  :<|> CaptureAll "segments" String :> Put '[JSON] String
+  :<|> CaptureAll "segments" String :> Delete '[JSON] String
 --  :<|> Trace '[JSON] [Int]
   :<|> Copy '[JSON] [Int]
-  :<|> Move '[JSON] [Int]
+  :<|> CaptureAll "segments" String :> Header "Destination" String :> Move '[JSON] String
   :<|> "users" :> Propfind '[JSON] [Int]
   :<|> "users" :> Get '[JSON] [Int]
 
@@ -281,7 +283,7 @@ userAPI = Proxy
 app1 :: Application
 app1 = addHeaders [("Dav", "1, 2, ordered-collections")] $ provideOptions userAPI $ logStdoutDev $ serve userAPI
        (
-         server1
+         doMkCol
          :<|> doPropFind
          :<|> server1
          :<|> server1
@@ -289,10 +291,10 @@ app1 = addHeaders [("Dav", "1, 2, ordered-collections")] $ provideOptions userAP
          :<|> server1
          :<|> server2
          :<|> server1
+         :<|> doPut
+         :<|> doDelete
          :<|> server1
-         :<|> server1
-         :<|> server1
-         :<|> server1
+         :<|> doMove
          :<|> server1
          :<|> server1
        )
@@ -307,16 +309,69 @@ server1 = return users1
 server2::Handler String
 server2 = return "qq"
 
-doPropFind::Handler [FSObject]
-doPropFind = do
-  fileNames <- liftIO $ getDirectoryContents "/home/jim/webdav"
+doMove::[String]->Maybe String->Handler String
+doMove _ Nothing = error "Missing 'destination' header"
+doMove urlPath (Just destination) = do
+  liftIO $ putStrLn "In doMove"
+  let fullPath = "/" ++ intercalate "/" urlPath
 
-  objects <- liftIO $ 
-    for (map ("/" ++) fileNames) getObject
+  let relativePath =
+        if webBase `isPrefixOf` destination
+        then drop (length webBase) destination
+        else error "destination is not on this webdav server"
+  
+  liftIO $ putStrLn $ "Moving " ++ fullPath ++ " to " ++ relativePath
 
-  currentDir <- liftIO $ getFolderObject "/"
+  liftIO $ renamePath (fileBase ++ fullPath) (fileBase ++ relativePath)
+  
+  return ""
+
+doPut::[String]->Handler String
+doPut urlPath = do
+  liftIO $ putStrLn "In doPut"
+  let fullPath = "/" ++ intercalate "/" urlPath
+
+  liftIO $ putStrLn $ "Creating file: " ++ fullPath
+
+  liftIO $ writeFile (fileBase ++ fullPath) "qq"
+  
+  return ""
+
+doDelete::[String]->Handler String
+doDelete urlPath = do
+  liftIO $ putStrLn "In doDelete"
+  let fullPath = "/" ++ intercalate "/" urlPath
+  
+  liftIO $ removePathForcibly $ fileBase ++ fullPath
+  return ""
+
+  
+doMkCol::[String]->Handler String
+doMkCol urlPath = do
+  liftIO $ putStrLn "In doMkCol"
+  let fullPath = "/" ++ intercalate "/" urlPath
+  liftIO $ print fullPath
+  liftIO $ createDirectory $ fileBase ++ fullPath
+  return ""
+  
+doPropFind::[String]->Handler [FSObject]
+doPropFind urlPath = do
+  liftIO $ putStrLn "In doPropFind"
+  let fullPath = "/" ++ intercalate "/" urlPath
+
+  object <- liftIO $ getObject fullPath
+
+  case object of
+   File _ _ _ _ -> return [object]
+   Folder _ _ _ -> do
+     fileNames <- liftIO $ listDirectory $ fileBase ++ fullPath
+
+     objects <- liftIO $ 
+                for (map ((fullPath ++ "/") ++) fileNames) getObject
+
+     currentDir <- liftIO $ getFolderObject fullPath
     
-  return $ currentDir:objects
+     return $ currentDir:objects
 
 users1::[Int]
 users1 = [1,2,3,4]
