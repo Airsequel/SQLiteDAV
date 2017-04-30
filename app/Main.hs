@@ -11,6 +11,7 @@
 module Main where
 
 import Control.Monad.IO.Class
+import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
 import Data.DateTime
 
@@ -18,6 +19,8 @@ import Data.List
 import Data.Traversable
 
 import GHC.Stack
+
+import Network.HTTP.Types.URI
 
 import Servant
 import Servant.Foreign.Internal
@@ -333,12 +336,13 @@ server2 = return "qq"
 doMove::[String]->Maybe String->Handler String
 doMove _ Nothing = error "Missing 'destination' header"
 doMove urlPath (Just destination) = do
-  liftIO $ putStrLn "In doMove"
+  let destination' = Char8.unpack (urlDecode False (Char8.pack destination))
+  liftIO $ putStrLn $ "In doMove: " ++ destination'
   let fullPath = "/" ++ intercalate "/" urlPath
 
   let relativePath =
-        if webBase `isPrefixOf` destination
-        then drop (length webBase) destination
+        if webBase `isPrefixOf` destination'
+        then drop (length webBase) destination'
         else error "destination is not on this webdav server"
   
   liftIO $ putStrLn $ "Moving " ++ fullPath ++ " to " ++ relativePath

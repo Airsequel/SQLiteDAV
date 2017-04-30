@@ -27,6 +27,7 @@ executable webdavServer-exe
                      , datetime
                      , directory
                      , filepath
+                     , http-types
                      , servant
                      , servant-foreign
                      , servant-options
