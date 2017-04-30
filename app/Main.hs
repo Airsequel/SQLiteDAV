@@ -11,6 +11,8 @@
 module Main where
 
 import Control.Monad.IO.Class
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
 import Data.DateTime
@@ -124,9 +126,9 @@ file url =
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
-        te "creationdate" [] "2017-04-27T08:33:10Z",
+--        te "creationdate" [] "2017-04-27T08:33:10Z",
         te "displayname" [] "aFile",
-        te "getlastmodified" [] "Thu, 27 Apr 2017 08:33:10 GMT",
+--        te "getlastmodified" [] "Thu, 27 Apr 2017 08:33:10 GMT",
         e "resourcetype" [] [],
         te "getcontentlength" [] "10"
         ]
@@ -293,7 +295,7 @@ type UserAPI1 =
   :<|> CaptureAll "segments" String :> Get '[PlainText] String
 --  :<|> Head '[JSON] [Int]
   :<|> Post '[JSON] [Int]
-  :<|> CaptureAll "segments" String :> Put '[JSON] String
+  :<|> CaptureAll "segments" String :> ReqBody '[OctetStream] ByteString :> Put '[JSON] String
   :<|> CaptureAll "segments" String :> Delete '[JSON] String
 --  :<|> Trace '[JSON] [Int]
   :<|> Copy '[JSON] [Int]
@@ -351,14 +353,14 @@ doMove urlPath (Just destination) = do
   
   return ""
 
-doPut::[String]->Handler String
-doPut urlPath = do
+doPut::[String]->ByteString->Handler String
+doPut urlPath body = do
   liftIO $ putStrLn "In doPut"
   let fullPath = "/" ++ intercalate "/" urlPath
 
   liftIO $ putStrLn $ "Creating file: " ++ fullPath
 
-  liftIO $ writeFile (fileBase ++ fullPath) "qq"
+  liftIO $ ByteString.writeFile (fileBase ++ fullPath) body
   
   return ""
 
@@ -369,7 +371,7 @@ doGet urlPath = do
 
   liftIO $ putStrLn $ "Getting file: " ++ fullPath
 
-  return "qq"
+  liftIO $ readFile (fileBase ++ fullPath)
 
 doDelete::[String]->Handler String
 doDelete urlPath = do
