@@ -290,7 +290,7 @@ type UserAPI1 =
   :<|> Lock '[JSON] [Int]
   :<|> Unlock '[JSON] [Int]
   :<|> Orderpatch '[JSON] [Int]
-  :<|> Get '[PlainText] String
+  :<|> CaptureAll "segments" String :> Get '[PlainText] String
 --  :<|> Head '[JSON] [Int]
   :<|> Post '[JSON] [Int]
   :<|> CaptureAll "segments" String :> Put '[JSON] String
@@ -313,7 +313,7 @@ app1 = addHeaders [("Dav", "1, 2, ordered-collections")] $ provideOptions userAP
          :<|> server1
          :<|> server1
          :<|> server1
-         :<|> server2
+         :<|> doGet
          :<|> server1
          :<|> doPut
          :<|> doDelete
@@ -361,6 +361,15 @@ doPut urlPath = do
   liftIO $ writeFile (fileBase ++ fullPath) "qq"
   
   return ""
+
+doGet::[String]->Handler String
+doGet urlPath = do
+  liftIO $ putStrLn "In doGet"
+  let fullPath = "/" ++ intercalate "/" urlPath
+
+  liftIO $ putStrLn $ "Getting file: " ++ fullPath
+
+  return "qq"
 
 doDelete::[String]->Handler String
 doDelete urlPath = do
