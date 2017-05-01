@@ -212,75 +212,6 @@ getObject filePath = do
 
 
 
-  
-{-
-<?xml version="1.0" encoding="utf-8"?>
-<d:multistatus xmlns:d="DAV:">
-  <d:response>
-    <d:href>http://www.ajaxfilebrowser.com/</d:href>
-    <d:propstat>
-      <d:status>HTTP/1.1 200 OK</d:status>
-      <d:prop>
-        <d:creationdate>2014-02-26T01:53:16Z</d:creationdate>
-        <d:displayname>Storage</d:displayname>
-        <d:getlastmodified>Thu, 27 Apr 2017 08:33:10 GMT</d:getlastmodified>
-        <d:resourcetype><d:collection /></d:resourcetype>
-      </d:prop>
-    </d:propstat>
-    <d:propstat>
-      <d:status>HTTP/1.1 404 Not Found</d:status>
-      <d:prop>
-        <d:getcontentlength />
-        <d:getcontenttype />
-        <d:getetag />
-      </d:prop>
-      <d:responsedescription>Property was not found</d:responsedescription>
-    </d:propstat>
-  </d:response>
-  <d:response>
-    <d:href>http://www.ajaxfilebrowser.com/qqqq/</d:href>
-    <d:propstat>
-      <d:status>HTTP/1.1 200 OK</d:status>
-      <d:prop>
-        <d:creationdate>2017-04-27T08:33:10Z</d:creationdate>
-        <d:displayname>qqqq</d:displayname>
-        <d:getlastmodified>Thu, 27 Apr 2017 08:33:10 GMT</d:getlastmodified>
-        <d:resourcetype><d:collection /></d:resourcetype>
-      </d:prop>
-    </d:propstat>
-    <d:propstat>
-      <d:status>HTTP/1.1 404 Not Found</d:status>
-      <d:prop>
-        <d:getcontentlength />
-        <d:getcontenttype />
-        <d:getetag />
-      </d:prop>
-      <d:responsedescription>Property was not found</d:responsedescription>
-    </d:propstat>
-  </d:response>
-</d:multistatus>
--}
-
-{-    
-<?xml version="1.0" encoding="utf-8"?>
-<d:multistatus xmlns:d="DAV:">
-  <d:response>
-    <d:href>http://www.ajaxfilebrowser.com/Untitled%20Document</d:href>
-    <d:propstat>
-      <d:status>HTTP/1.1 200 OK</d:status>
-      <d:prop>
-        <d:creationdate>2017-04-29T23:18:05Z</d:creationdate>
-        <d:displayname>Untitled Document</d:displayname>
-        <d:getcontentlength>5</d:getcontentlength>
-        <d:getcontenttype>application/octet-stream</d:getcontenttype>
-        <d:getetag>"4/29/2017 11:18:05 PM-1"</d:getetag>
-        <d:getlastmodified>Sat, 29 Apr 2017 23:18:05 GMT</d:getlastmodified>
-        <d:resourcetype />
-      </d:prop>
-    </d:propstat>
-  </d:response>
-</d:multistatus>
--}
 
 instance Accept XML where
   contentType _ = "text/xml"
@@ -294,12 +225,14 @@ type UserAPI1 =
   :<|> CaptureAll "segments" String :> Delete '[JSON] String
   :<|> CaptureAll "segments" String :> Header "Destination" String :> Move '[JSON] String
   :<|> CaptureAll "segments" String :> Header "Destination" String :> Copy '[JSON] String
-  :<|> Proppatch '[JSON] [Int]
-  :<|> Lock '[JSON] [Int]
-  :<|> Unlock '[JSON] [Int]
-  :<|> Orderpatch '[JSON] [Int]
+  
+--  :<|> Proppatch '[JSON] [Int]
+--  :<|> Lock '[JSON] [Int]
+--  :<|> Unlock '[JSON] [Int]
+--  :<|> Orderpatch '[JSON] [Int]
+--  :<|> Post '[JSON] [Int]
+  
 --  :<|> Head '[JSON] [Int]
-  :<|> Post '[JSON] [Int]
 --  :<|> Trace '[JSON] [Int]
 
 userAPI :: Proxy UserAPI1
@@ -315,19 +248,11 @@ app1 = addHeaders [("Dav", "1, 2, ordered-collections")] $ provideOptions userAP
          :<|> doDelete
          :<|> doMove
          :<|> doCopy
-         :<|> server1
-         :<|> server1
-         :<|> server1
-         :<|> server1
-         :<|> server1
        )
       
 main :: IO ()
 main = run 20001 app1
 
-
-server1::Handler [Int]
-server1 = return users1
 
 doMove::[String]->Maybe String->Handler String
 doMove _ Nothing = error "Missing 'destination' header"
@@ -421,6 +346,3 @@ doPropFind urlPath = do
      currentDir <- liftIO $ getFolderObject fullPath
     
      return $ currentDir:catMaybes objects
-
-users1::[Int]
-users1 = [1,2,3,4]
