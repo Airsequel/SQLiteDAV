@@ -289,20 +289,18 @@ instance NotFound where
 type UserAPI1 =
   CaptureAll "segments" String :> Mkcol '[JSON] String
   :<|> CaptureAll "segments" String :> Propfind '[XML] [FSObject]
+  :<|> CaptureAll "segments" String :> Get '[PlainText] String
+  :<|> CaptureAll "segments" String :> ReqBody '[OctetStream] ByteString :> Put '[JSON] String
+  :<|> CaptureAll "segments" String :> Delete '[JSON] String
+  :<|> CaptureAll "segments" String :> Header "Destination" String :> Move '[JSON] String
+  :<|> CaptureAll "segments" String :> Header "Destination" String :> Copy '[JSON] String
   :<|> Proppatch '[JSON] [Int]
   :<|> Lock '[JSON] [Int]
   :<|> Unlock '[JSON] [Int]
   :<|> Orderpatch '[JSON] [Int]
-  :<|> CaptureAll "segments" String :> Get '[PlainText] String
 --  :<|> Head '[JSON] [Int]
   :<|> Post '[JSON] [Int]
-  :<|> CaptureAll "segments" String :> ReqBody '[OctetStream] ByteString :> Put '[JSON] String
-  :<|> CaptureAll "segments" String :> Delete '[JSON] String
 --  :<|> Trace '[JSON] [Int]
-  :<|> Copy '[JSON] [Int]
-  :<|> CaptureAll "segments" String :> Header "Destination" String :> Move '[JSON] String
-  :<|> "users" :> Propfind '[JSON] [Int]
-  :<|> "users" :> Get '[JSON] [Int]
 
 userAPI :: Proxy UserAPI1
 userAPI = Proxy
@@ -312,16 +310,14 @@ app1 = addHeaders [("Dav", "1, 2, ordered-collections")] $ provideOptions userAP
        (
          doMkCol
          :<|> doPropFind
-         :<|> server1
-         :<|> server1
-         :<|> server1
-         :<|> server1
          :<|> doGet
-         :<|> server1
          :<|> doPut
          :<|> doDelete
-         :<|> server1
          :<|> doMove
+         :<|> doCopy
+         :<|> server1
+         :<|> server1
+         :<|> server1
          :<|> server1
          :<|> server1
        )
@@ -332,9 +328,6 @@ main = run 20001 app1
 
 server1::Handler [Int]
 server1 = return users1
-
-server2::Handler String
-server2 = return "qq"
 
 doMove::[String]->Maybe String->Handler String
 doMove _ Nothing = error "Missing 'destination' header"
@@ -351,6 +344,24 @@ doMove urlPath (Just destination) = do
   liftIO $ putStrLn $ "Moving " ++ fullPath ++ " to " ++ relativePath
 
   liftIO $ renamePath (fileBase ++ fullPath) (fileBase ++ relativePath)
+  
+  return ""
+
+doCopy::[String]->Maybe String->Handler String
+doCopy _ Nothing = error "Missing 'destination' header"
+doCopy urlPath (Just destination) = do
+  let destination' = Char8.unpack (urlDecode False (Char8.pack destination))
+  liftIO $ putStrLn $ "In doMove: " ++ destination'
+  let fullPath = "/" ++ intercalate "/" urlPath
+
+  let relativePath =
+        if webBase `isPrefixOf` destination'
+        then drop (length webBase) destination'
+        else error "destination is not on this webdav server"
+  
+  liftIO $ putStrLn $ "Moving " ++ fullPath ++ " to " ++ relativePath
+
+  liftIO $ copyFile (fileBase ++ fullPath) (fileBase ++ relativePath)
   
   return ""
 
