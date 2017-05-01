@@ -18,6 +18,7 @@ import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
 import Data.DateTime
 
 import Data.List
+import Data.Maybe
 import Data.Traversable
 
 import GHC.Stack
@@ -198,15 +199,15 @@ getFolderObject filePath =
     }
 
 
-getObject::HasCallStack=>FilePath->IO FSObject
+getObject::HasCallStack=>FilePath->IO (Maybe FSObject)
 getObject filePath = do
   let fullPath=fileBase++filePath
   isDir <- doesDirectoryExist fullPath
   isFile <- doesFileExist fullPath
   case (isDir, isFile) of
-   (False, False) -> error $ "getObject called on an object that doesn't exist: " ++ fullPath
-   (False, True) -> getFileObject filePath
-   (True, False) -> getFolderObject filePath
+   (False, False) -> return Nothing
+   (False, True) -> fmap Just $ getFileObject filePath
+   (True, False) -> fmap Just $ getFolderObject filePath
    (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
 
 
@@ -395,11 +396,12 @@ doPropFind urlPath = do
   liftIO $ putStrLn "In doPropFind"
   let fullPath = "/" ++ intercalate "/" urlPath
 
-  object <- liftIO $ getObject fullPath
+  maybeObject <- liftIO $ getObject fullPath
 
-  case object of
-   File _ _ _ _ -> return [object]
-   Folder _ _ _ -> do
+  case maybeObject of
+   Nothing -> throwError err404
+   Just (object@(File _ _ _ _)) -> return [object]
+   Just (Folder _ _ _) -> do
      fileNames <- liftIO $ listDirectory $ fileBase ++ fullPath
 
      objects <- liftIO $ 
@@ -407,7 +409,7 @@ doPropFind urlPath = do
 
      currentDir <- liftIO $ getFolderObject fullPath
     
-     return $ currentDir:objects
+     return $ currentDir:catMaybes objects
 
 users1::[Int]
 users1 = [1,2,3,4]
