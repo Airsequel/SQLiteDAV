@@ -106,6 +106,11 @@ instance MimeRender XML [(String, FSObject)] where
     [Attr (unqual "xmlns:D") "DAV:"]
     $ map (uncurry fsObjectToXml) items
 
+instance MimeUnrender XML Element where
+  mimeUnrender _ x =
+    case parseXMLDoc x of
+     Nothing -> Left $ "Bad XML Input: " ++ show x
+     Just doc -> Right doc
 
 folder::String->Element
 folder url = 
@@ -213,12 +218,12 @@ getObject filePath = do
 
 
 instance Accept XML where
-  contentType _ = "text/xml"
+  contentType _ = "application/xml"
 instance NotFound where
   
 type UserAPI1 =
   CaptureAll "segments" String :> Mkcol '[JSON] String
-  :<|> CaptureAll "segments" String :> Propfind '[XML] [(String, FSObject)]
+  :<|> CaptureAll "segments" String :> ReqBody '[XML] Element :> Propfind '[XML] [(String, FSObject)]
   :<|> CaptureAll "segments" String :> Get '[PlainText] String
   :<|> CaptureAll "segments" String :> ReqBody '[OctetStream] ByteString :> Put '[JSON] String
   :<|> CaptureAll "segments" String :> Delete '[JSON] String
@@ -326,9 +331,9 @@ doMkCol urlPath = do
   liftIO $ createDirectory $ fileBase ++ fullPath
   return ""
   
-doPropFind::[String]->Handler [(String, FSObject)]
-doPropFind urlPath = do
-  liftIO $ putStrLn "In doPropFind"
+doPropFind::[String]->Element->Handler [(String, FSObject)]
+doPropFind urlPath body = do
+  liftIO $ putStrLn $ "In doPropFind: " ++ show body
   let fullPath = "/" ++ intercalate "/" urlPath
 
   maybeObject <- liftIO $ getObject fullPath
