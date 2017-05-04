@@ -19,6 +19,7 @@ import Data.DateTime
 
 import Data.List
 import Data.Maybe
+import Data.Time.Format
 import Data.Traversable
 
 import GHC.Stack
@@ -103,7 +104,7 @@ instance MimeRender XML [(String, FSObject)] where
     Lazy.Char8.pack $ showTopElement $ 
     e "multistatus"
     [Attr (unqual "xmlns:D") "DAV:"]
-    $ map (fsObjectToXml . snd) items
+    $ map (uncurry fsObjectToXml) items
 
 
 folder::String->Element
@@ -138,47 +139,45 @@ file url =
 
 data FSObject =
   File {
-    relativePath::String,
     creationDate::DateTime,
     lastModified::DateTime,
     --resourcetype::??
     getcontentlength::Int
     }
   | Folder {
-    relativePath::String,
     resourceType::String,
     contentLength::Int
     }
 
 getFileObject::FilePath->IO FSObject
-getFileObject filePath =
+getFileObject filePath = do
+  modificationTime <- getModificationTime $ fileBase ++ filePath
   return
-  File {
-    relativePath=filePath,
-    creationDate=fromSeconds 0,
-    lastModified=fromSeconds 0,
-    --resourcetype::??
-    getcontentlength=10
-    }
+    File {
+      creationDate=fromSeconds 0,
+      lastModified=modificationTime,
+      getcontentlength=10
+      }
 
-fsObjectToXml::FSObject->Element
-fsObjectToXml File{..} =
+fsObjectToXml::String->FSObject->Element
+fsObjectToXml filePath File{..} =
   e "response" [] [
-    te "href" [] $ webBase ++ relativePath,
+    te "href" [] $ webBase ++ filePath,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
         te "creationdate" [] "2017-04-27T08:33:10Z",
-        te "displayname" [] $ takeFileName relativePath,
-        te "getlastmodified" [] "Thu, 27 Apr 2017 08:33:10 GMT",
+        te "displayname" [] $ takeFileName filePath,
+        te "getlastmodified" [] $
+            formatTime defaultTimeLocale "%a, %e %b %Y %H:%M:%S %Z" lastModified,
         e "resourcetype" [] [],
         te "getcontentlength" [] "10"
         ]
       ]
     ]
-fsObjectToXml Folder{..} =
+fsObjectToXml filePath Folder{..} =
   e "response" [] [
-    te "href" [] $ webBase ++ relativePath,
+    te "href" [] $ webBase ++ filePath,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
       e "prop" [] [
@@ -190,13 +189,13 @@ fsObjectToXml Folder{..} =
     ]
 
 getFolderObject::FilePath->IO FSObject
-getFolderObject filePath =
+getFolderObject filePath = do
+  _ <- getModificationTime $ fileBase ++ filePath
   return
-  Folder {
-    relativePath=filePath,
-    resourceType="",
-    contentLength=10
-    }
+    Folder {
+      resourceType="",
+      contentLength=10
+      }
 
 
 getObject::HasCallStack=>FilePath->IO (Maybe FSObject)
@@ -336,8 +335,8 @@ doPropFind urlPath = do
 
   case maybeObject of
    Nothing -> throwError err404
-   Just (object@(File _ _ _ _)) -> return [(fullPath, object)]
-   Just (Folder _ _ _) -> do
+   Just (object@(File{})) -> return [(fullPath, object)]
+   Just (Folder{}) -> do
      fileNames <- liftIO $ listDirectory $ fileBase ++ fullPath
 
      objects <-

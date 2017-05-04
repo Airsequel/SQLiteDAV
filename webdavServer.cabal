@@ -32,6 +32,7 @@ executable webdavServer-exe
                      , servant-foreign
                      , servant-options
                      , servant-server
+                     , time
                      , wai-extra
                      , warp
                      , webdavServer
