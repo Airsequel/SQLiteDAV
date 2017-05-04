@@ -332,8 +332,10 @@ doMkCol urlPath = do
   return ""
   
 doPropFind::[String]->Element->Handler [(String, FSObject)]
-doPropFind urlPath body = do
-  liftIO $ putStrLn $ "In doPropFind: " ++ show body
+doPropFind urlPath doc = do
+  --TODO - check that the xml path element names are all correct....
+  let propNames = [qName $ elName x | Elem x <- concat $ map elContent $ [x | Elem x <- elContent doc]]
+  liftIO $ putStrLn $ "In doPropFind: " ++ show propNames
   let fullPath = "/" ++ intercalate "/" urlPath
 
   maybeObject <- liftIO $ getObject fullPath
