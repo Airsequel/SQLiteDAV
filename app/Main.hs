@@ -98,12 +98,12 @@ instance MimeRender XML [Int] where
     [Attr (unqual "xmlns:D") "DAV:"]
     [folder "/", folder "/aFolder", file "/aFile"]
 
-instance MimeRender XML [FSObject] where
+instance MimeRender XML [(String, FSObject)] where
   mimeRender _ items =
     Lazy.Char8.pack $ showTopElement $ 
     e "multistatus"
     [Attr (unqual "xmlns:D") "DAV:"]
-    $ map fsObjectToXml items
+    $ map (fsObjectToXml . snd) items
 
 
 folder::String->Element
@@ -219,7 +219,7 @@ instance NotFound where
   
 type UserAPI1 =
   CaptureAll "segments" String :> Mkcol '[JSON] String
-  :<|> CaptureAll "segments" String :> Propfind '[XML] [FSObject]
+  :<|> CaptureAll "segments" String :> Propfind '[XML] [(String, FSObject)]
   :<|> CaptureAll "segments" String :> Get '[PlainText] String
   :<|> CaptureAll "segments" String :> ReqBody '[OctetStream] ByteString :> Put '[JSON] String
   :<|> CaptureAll "segments" String :> Delete '[JSON] String
@@ -327,7 +327,7 @@ doMkCol urlPath = do
   liftIO $ createDirectory $ fileBase ++ fullPath
   return ""
   
-doPropFind::[String]->Handler [FSObject]
+doPropFind::[String]->Handler [(String, FSObject)]
 doPropFind urlPath = do
   liftIO $ putStrLn "In doPropFind"
   let fullPath = "/" ++ intercalate "/" urlPath
@@ -336,13 +336,16 @@ doPropFind urlPath = do
 
   case maybeObject of
    Nothing -> throwError err404
-   Just (object@(File _ _ _ _)) -> return [object]
+   Just (object@(File _ _ _ _)) -> return [(fullPath, object)]
    Just (Folder _ _ _) -> do
      fileNames <- liftIO $ listDirectory $ fileBase ++ fullPath
 
-     objects <- liftIO $ 
-                for (map ((fullPath ++ "/") ++) fileNames) getObject
+     objects <-
+       liftIO $ 
+       for (map ((fullPath ++ "/") ++) fileNames) $ \f -> do
+         o <- getObject f
+         return $ fmap ((,) f) o
 
      currentDir <- liftIO $ getFolderObject fullPath
     
-     return $ currentDir:catMaybes objects
+     return $ (fullPath, currentDir):catMaybes objects
