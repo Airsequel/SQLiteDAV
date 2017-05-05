@@ -39,13 +39,9 @@ import Network.Wai.Middleware.Servant.Options
 
 import Text.XML.Light
 
-import Properties
+import Network.WebDav.Constants
+import Network.WebDav.Properties
 
-fileBase::FilePath
-fileBase="/home/jim/webdav"
-
-webBase::String
-webBase="http://127.0.0.1:20001"
 
 data DavMethod = MKCOL | PROPFIND | PROPPATCH | LOCK | UNLOCK | ORDERPATCH | COPY | MOVE
 
@@ -359,16 +355,6 @@ doMkCol urlPath = do
   liftIO $ createDirectory $ fileBase ++ fullPath
   return ""
 
-data ItemType = File | Folder
-
-data PropResults =
-  PropResults {
-    propName::String,
-    itemType::ItemType,
-    props::[(String, String)],
-    propMissing::[String]
-    }
-  
 doPropFind::[String]->Element->Handler [PropResults]
 doPropFind urlPath doc = do
   --TODO - check that the xml path element names are all correct....
@@ -422,10 +408,3 @@ getPropResults propNames filePath = do
       propMissing = lefts results
       }
             
-
-getProp::FilePath->String->IO (Maybe String)
-getProp filePath "getlastmodified" = do
-  lastModified <- getModificationTime $ fileBase ++ filePath
-  return $ Just $ formatTime defaultTimeLocale "%a, %e %b %Y %H:%M:%S %Z" lastModified
-  
-getProp _ _ = return Nothing
