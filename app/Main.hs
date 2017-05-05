@@ -15,14 +15,9 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
-import Data.DateTime
 
-import Data.Either
 import Data.List
-import Data.Time.Format
 import Data.Traversable
-
-import GHC.Stack
 
 import Network.HTTP.Types.URI
 
@@ -30,7 +25,6 @@ import Servant
 import Servant.Foreign.Internal
 
 import System.Directory
-import System.FilePath.Posix
 
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.AddHeaders
@@ -90,20 +84,6 @@ e name attrs content = Element{elName=QName{qName=name,qURI=Nothing,qPrefix=Just
 te::String->[Attr]->String->Element
 te name attrs text = Element{elName=QName{qName=name,qURI=Nothing,qPrefix=Just "D"}, elAttribs=attrs, elContent = [Text $ CData CDataText text Nothing], elLine=Nothing}
 
-instance MimeRender XML [Int] where
-  mimeRender _ _ =
-    Lazy.Char8.pack $ showTopElement $ 
-    e "multistatus"
-    [Attr (unqual "xmlns:D") "DAV:"]
-    [folder "/", folder "/aFolder", file "/aFile"]
-
-instance MimeRender XML [(String, FSObject)] where
-  mimeRender _ items =
-    Lazy.Char8.pack $ showTopElement $ 
-    e "multistatus"
-    [Attr (unqual "xmlns:D") "DAV:"]
-    $ map (uncurry fsObjectToXml) items
-
 instance MimeRender XML [PropResults] where
   mimeRender _ items = 
     Lazy.Char8.pack $ showTopElement $ 
@@ -117,90 +97,11 @@ instance MimeUnrender XML Element where
      Nothing -> Left $ "Bad XML Input: " ++ show x
      Just doc -> Right doc
 
-folder::String->Element
-folder url = 
-  e "response" [] [
-    te "href" [] $ webBase ++ url,
-    e "propstat" [] [
-      te "status" [] "HTTP/1.1 200 OK",
-      e "prop" [] [
-        e "resourcetype" [] [
-           e "collection" [] []
-           ],
-        te "getcontentlength" [] "10"]
-      ]
-    ]
 
-file::String->Element
-file url = 
-  e "response" [] [
-    te "href" [] $ webBase ++ url,
-    e "propstat" [] [
-      te "status" [] "HTTP/1.1 200 OK",
-      e "prop" [] [
---        te "creationdate" [] "2017-04-27T08:33:10Z",
-        te "displayname" [] "aFile",
---        te "getlastmodified" [] "Thu, 27 Apr 2017 08:33:10 GMT",
-        e "resourcetype" [] [],
-        te "getcontentlength" [] "10"
-        ]
-      ]
-    ]
-
-data FSObject =
-  FSFile {
-    creationDate::DateTime,
-    lastModified::DateTime,
-    --resourcetype::??
-    getcontentlength::Int
-    }
-  | FSFolder {
-    resourceType::String,
-    contentLength::Int
-    }
-
-getFileObject::FilePath->IO FSObject
-getFileObject filePath = do
-  modificationTime <- getModificationTime $ fileBase ++ filePath
-  return
-    FSFile {
-      creationDate=fromSeconds 0,
-      lastModified=modificationTime,
-      getcontentlength=10
-      }
-
-fsObjectToXml::String->FSObject->Element
-fsObjectToXml filePath FSFile{..} =
-  e "response" [] [
-    te "href" [] $ webBase ++ filePath,
-    e "propstat" [] [
-      te "status" [] "HTTP/1.1 200 OK",
-      e "prop" [] [
-        te "creationdate" [] "2017-04-27T08:33:10Z",
-        te "displayname" [] $ takeFileName filePath,
-        te "getlastmodified" [] $
-            formatTime defaultTimeLocale "%a, %e %b %Y %H:%M:%S %Z" lastModified,
-        e "resourcetype" [] [],
-        te "getcontentlength" [] "10"
-        ]
-      ]
-    ]
-fsObjectToXml filePath FSFolder{..} =
-  e "response" [] [
-    te "href" [] $ webBase ++ filePath,
-    e "propstat" [] [
-      te "status" [] "HTTP/1.1 200 OK",
-      e "prop" [] [
-        e "resourcetype" [] [
-           e "collection" [] []
-           ],
-        te "getcontentlength" [] "10"]
-      ]
-    ]
 
 propResultsToXml::PropResults->Element
 propResultsToXml PropResults{..} = do
-  e "response" [] [
+  e "response" [] ([
     te "href" [] $ webBase ++ propName,
     e "propstat" [] [
       te "status" [] "HTTP/1.1 200 OK",
@@ -212,31 +113,18 @@ propResultsToXml PropResults{..} = do
         ++
         map (\(name, val) -> te name [] val) props
         )
+      ]]
+    ++ (
+    if length propMissing /= 0
+    then 
+      [
+        e "propstat" [] [
+           te "status" [] "HTTP/1.1 404 Not Found",
+           e "prop" [] $ map (\x -> e x [] []) propMissing,
+           te "responsedescription" [] "Property was not found"
+           ]
       ]
-    ]
-
-
-
-getFolderObject::FilePath->IO FSObject
-getFolderObject filePath = do
-  _ <- getModificationTime $ fileBase ++ filePath
-  return
-    FSFolder {
-      resourceType="",
-      contentLength=10
-      }
-
-
-getObject::HasCallStack=>FilePath->IO (Maybe FSObject)
-getObject filePath = do
-  let fullPath=fileBase++filePath
-  isDir <- doesDirectoryExist fullPath
-  isFile <- doesFileExist fullPath
-  case (isDir, isFile) of
-   (False, False) -> return Nothing
-   (False, True) -> fmap Just $ getFileObject filePath
-   (True, False) -> fmap Just $ getFolderObject filePath
-   (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
+    else []))
 
 
 
@@ -360,51 +248,27 @@ doPropFind urlPath doc = do
   --TODO - check that the xml path element names are all correct....
   let propNames = [qName $ elName x | Elem x <- concat $ map elContent $ [x | Elem x <- elContent doc]]
   liftIO $ putStrLn $ "In doPropFind: " ++ show propNames
-  let fullPath = "/" ++ intercalate "/" urlPath
+  let filePath = "/" ++ intercalate "/" urlPath
 
-  maybeObject <- liftIO $ getObject fullPath
-
-  case maybeObject of
-   Nothing -> throwError err404
-   Just (FSFile{}) -> do
-     props <- liftIO $ getPropResults propNames fullPath
+  let fullPath=fileBase++filePath
+  liftIO $ putStrLn $ "fullPath: " ++ fullPath
+  isDir <- liftIO $ doesDirectoryExist fullPath
+  isFile <- liftIO $ doesFileExist fullPath
+  case (isDir, isFile) of
+   (False, False) -> throwError err404
+   (False, True) -> do
+     props <- liftIO $ getPropResults propNames filePath
      return [props]
-   Just (FSFolder{}) -> do
-     fileNames <- liftIO $ listDirectory $ fileBase ++ fullPath
+   (True, False) -> do
+     fileNames <- liftIO $ listDirectory fullPath
 
      objects <-
        liftIO $ 
-       for (map ((fullPath ++ "/") ++) fileNames) $ 
+       for (map ((filePath ++ "/") ++) fileNames) $ 
          getPropResults propNames
          
-     currentDirPropResults <- liftIO $ getPropResults propNames fullPath
+     currentDirPropResults <- liftIO $ getPropResults propNames filePath
     
      return $ currentDirPropResults:objects
+   (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
 
-getPropResults::[String]->FilePath->IO PropResults
-getPropResults propNames filePath = do
-  let fullPath=fileBase++filePath
-  isDir <- doesDirectoryExist fullPath
-  isFile <- doesFileExist fullPath
-  let theType =
-        case (isDir, isFile) of
-         (False, False) -> error $ "file doesn't exist: " ++ show fullPath
-         (False, True) -> File
-         (True, False) -> Folder
-         (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
-
-  results <- 
-    for propNames $ \propName -> do
-      result <- getProp filePath propName
-      case result of
-       Nothing -> return $ Left propName
-       Just x -> return $ Right (propName, x)
-  
-  return 
-    PropResults {
-      propName = filePath,
-      itemType = theType,
-      props = rights results,
-      propMissing = lefts results
-      }
-            

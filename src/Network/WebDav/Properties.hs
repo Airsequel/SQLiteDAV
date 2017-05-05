@@ -17,13 +17,13 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
 -}
-{-
 import Data.Either
+{-
 import Data.List
 -}
 import Data.Time.Format
-{-
 import Data.Traversable
+{-
 
 import GHC.Stack
 
@@ -58,6 +58,35 @@ data PropResults =
     }
   
             
+
+getPropResults::[String]->FilePath->IO PropResults
+getPropResults propNames filePath = do
+  let fullPath=fileBase++filePath
+  isDir <- doesDirectoryExist fullPath
+  isFile <- doesFileExist fullPath
+  let theType =
+        case (isDir, isFile) of
+         (False, False) -> error $ "file doesn't exist: " ++ show fullPath
+         (False, True) -> File
+         (True, False) -> Folder
+         (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
+
+  results <- 
+    for propNames $ \propName -> do
+      result <- getProp filePath propName
+      case result of
+       Nothing -> return $ Left propName
+       Just x -> return $ Right (propName, x)
+  
+  return 
+    PropResults {
+      propName = filePath,
+      itemType = theType,
+      props = rights results,
+      propMissing = lefts results
+      }
+            
+
 
 getProp::FilePath->String->IO (Maybe String)
 getProp filePath "getlastmodified" = do
