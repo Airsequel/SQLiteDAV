@@ -15,7 +15,12 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Lib
+                       Network.WebDav.Properties
   build-depends:       base >= 4.7 && < 5
+                     , datetime
+                     , directory
+                     , filepath
+                     , time
   default-language:    Haskell2010
 
 executable webdavServer-exe

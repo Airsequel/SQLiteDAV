@@ -39,6 +39,8 @@ import Network.Wai.Middleware.Servant.Options
 
 import Text.XML.Light
 
+import Properties
+
 fileBase::FilePath
 fileBase="/home/jim/webdav"
 
