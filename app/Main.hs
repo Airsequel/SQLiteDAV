@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE
       DataKinds,
       FlexibleInstances,
@@ -14,7 +13,6 @@ import Control.Monad.IO.Class
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
-import qualified Data.ByteString.Lazy.Char8 as Lazy.Char8
 
 import Data.List
 import Data.Traversable
@@ -37,46 +35,6 @@ import Network.WebDav.HTTPExtensions
 import Network.WebDav.Properties
 
 
-e::String->[Attr]->[Element]->Element
-e name attrs content = Element{elName=QName{qName=name,qURI=Nothing,qPrefix=Just "D"}, elAttribs=attrs, elContent = map Elem content, elLine=Nothing}
-
-te::String->[Attr]->String->Element
-te name attrs text = Element{elName=QName{qName=name,qURI=Nothing,qPrefix=Just "D"}, elAttribs=attrs, elContent = [Text $ CData CDataText text Nothing], elLine=Nothing}
-
-instance MimeRender XML [PropResults] where
-  mimeRender _ items = 
-    Lazy.Char8.pack $ showTopElement $ 
-    e "multistatus"
-    [Attr (unqual "xmlns:D") "DAV:"]
-    $ map propResultsToXml items 
-
-
-propResultsToXml::PropResults->Element
-propResultsToXml PropResults{..} = do
-  e "response" [] ([
-    te "href" [] $ webBase ++ propName,
-    e "propstat" [] [
-      te "status" [] "HTTP/1.1 200 OK",
-      e "prop" [] (
-        (case itemType of
-          File -> []
-          Folder -> 
-            [e "resourcetype" [] [e "collection" [] []]])
-        ++
-        map (\(name, val) -> te name [] val) props
-        )
-      ]]
-    ++ (
-    if length propMissing /= 0
-    then 
-      [
-        e "propstat" [] [
-           te "status" [] "HTTP/1.1 404 Not Found",
-           e "prop" [] $ map (\x -> e x [] []) propMissing,
-           te "responsedescription" [] "Property was not found"
-           ]
-      ]
-    else []))
 
 
 

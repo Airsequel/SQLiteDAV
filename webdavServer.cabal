@@ -18,6 +18,7 @@ library
                        Network.WebDav.HTTPExtensions
                        Network.WebDav.Properties
   build-depends:       base >= 4.7 && < 5
+                     , bytestring
                      , datetime
                      , directory
                      , filepath
