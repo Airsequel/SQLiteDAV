@@ -22,13 +22,13 @@ import Network.WebDav.Properties
 
 
 type WebDavAPI =
-  CaptureAll "segments" String :> Mkcol '[JSON] String
+  CaptureAll "segments" String :> Mkcol '[JSON] ()
   :<|> CaptureAll "segments" String :> ReqBody '[XML] Element :> Propfind '[XML] [PropResults]
   :<|> CaptureAll "segments" String :> Get '[PlainText] String
-  :<|> CaptureAll "segments" String :> ReqBody '[OctetStream] ByteString :> Put '[JSON] String
-  :<|> CaptureAll "segments" String :> Delete '[JSON] String
-  :<|> CaptureAll "segments" String :> Header "Destination" String :> Move '[JSON] String
-  :<|> CaptureAll "segments" String :> Header "Destination" String :> Copy '[JSON] String
+  :<|> CaptureAll "segments" String :> ReqBody '[OctetStream] ByteString :> Put '[JSON] ()
+  :<|> CaptureAll "segments" String :> Delete '[JSON] ()
+  :<|> CaptureAll "segments" String :> Header "Destination" String :> Move '[JSON] ()
+  :<|> CaptureAll "segments" String :> Header "Destination" String :> Copy '[JSON] ()
   
 --  :<|> Proppatch '[JSON] [Int]
 --  :<|> Lock '[JSON] [Int]

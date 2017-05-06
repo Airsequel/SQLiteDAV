@@ -38,7 +38,7 @@ webDavServer = addHeaders [("Dav", "1, 2, ordered-collections")] $ provideOption
        )
       
 
-doMove::[String]->Maybe String->Handler String
+doMove::[String]->Maybe String->Handler ()
 doMove _ Nothing = error "Missing 'destination' header"
 doMove urlPath (Just destination) = do
   let destination' = Char8.unpack (urlDecode False (Char8.pack destination))
@@ -53,10 +53,8 @@ doMove urlPath (Just destination) = do
   liftIO $ putStrLn $ "Moving " ++ fullPath ++ " to " ++ relativePath
 
   liftIO $ renamePath (fileBase ++ fullPath) (fileBase ++ relativePath)
-  
-  return ""
 
-doCopy::[String]->Maybe String->Handler String
+doCopy::[String]->Maybe String->Handler ()
 doCopy _ Nothing = error "Missing 'destination' header"
 doCopy urlPath (Just destination) = do
   let destination' = Char8.unpack (urlDecode False (Char8.pack destination))
@@ -71,10 +69,8 @@ doCopy urlPath (Just destination) = do
   liftIO $ putStrLn $ "Moving " ++ fullPath ++ " to " ++ relativePath
 
   liftIO $ copyFile (fileBase ++ fullPath) (fileBase ++ relativePath)
-  
-  return ""
 
-doPut::[String]->ByteString->Handler String
+doPut::[String]->ByteString->Handler ()
 doPut urlPath body = do
   liftIO $ putStrLn "In doPut"
   let fullPath = "/" ++ intercalate "/" urlPath
@@ -82,8 +78,6 @@ doPut urlPath body = do
   liftIO $ putStrLn $ "Creating file: " ++ fullPath
 
   liftIO $ ByteString.writeFile (fileBase ++ fullPath) body
-  
-  return ""
 
 doGet::[String]->Handler String
 doGet urlPath = do
@@ -94,22 +88,20 @@ doGet urlPath = do
 
   liftIO $ readFile (fileBase ++ fullPath)
 
-doDelete::[String]->Handler String
+doDelete::[String]->Handler ()
 doDelete urlPath = do
   liftIO $ putStrLn "In doDelete"
   let fullPath = "/" ++ intercalate "/" urlPath
   
   liftIO $ removePathForcibly $ fileBase ++ fullPath
-  return ""
 
   
-doMkCol::[String]->Handler String
+doMkCol::[String]->Handler ()
 doMkCol urlPath = do
   liftIO $ putStrLn "In doMkCol"
   let fullPath = "/" ++ intercalate "/" urlPath
   liftIO $ print fullPath
   liftIO $ createDirectory $ fileBase ++ fullPath
-  return ""
 
 doPropFind::[String]->Element->Handler [PropResults]
 doPropFind urlPath doc = do
