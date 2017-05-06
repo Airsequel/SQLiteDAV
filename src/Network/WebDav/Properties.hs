@@ -33,6 +33,8 @@ import Servant
 import Servant.Foreign.Internal
 -}
 import System.Directory
+import System.FilePath.Posix
+import System.Posix
 {-
 
 import Network.Wai.Handler.Warp
@@ -92,5 +94,18 @@ getProp::FilePath->String->IO (Maybe String)
 getProp filePath "getlastmodified" = do
   lastModified <- getModificationTime $ fileBase ++ filePath
   return $ Just $ formatTime defaultTimeLocale "%a, %e %b %Y %H:%M:%S %Z" lastModified
-  
-getProp _ _ = return Nothing
+getProp _ "creationdate" = return Nothing -- Unix doesn't seem to store creation date
+getProp filePath "displayname" = return $ Just $ takeFileName filePath
+getProp filePath "getcontentlength" = do
+  stat <- getFileStatus $ fileBase ++ filePath
+  return $ Just $ show $ fileSize stat
+getProp filePath "getcontenttype" = do
+  case takeExtension filePath of
+   ".txt" -> return $ Just "text/plain"
+   _ -> return Nothing
+getProp _ "resourcetype" = return Nothing -- this is handled elsewhere
+
+        
+getProp _ prop = do
+  putStrLn $ "Warning: server requested a property that we do not handle: " ++ prop
+  return Nothing
