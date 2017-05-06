@@ -254,21 +254,15 @@ doPropFind urlPath doc = do
   liftIO $ putStrLn $ "fullPath: " ++ fullPath
   isDir <- liftIO $ doesDirectoryExist fullPath
   isFile <- liftIO $ doesFileExist fullPath
-  case (isDir, isFile) of
-   (False, False) -> throwError err404
-   (False, True) -> do
-     props <- liftIO $ getPropResults propNames filePath
-     return [props]
-   (True, False) -> do
-     fileNames <- liftIO $ listDirectory fullPath
 
-     objects <-
-       liftIO $ 
-       for (map ((filePath ++ "/") ++) fileNames) $ 
-         getPropResults propNames
-         
-     currentDirPropResults <- liftIO $ getPropResults propNames filePath
-    
-     return $ currentDirPropResults:objects
-   (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
+  files <- 
+    case (isDir, isFile) of
+     (False, False) -> throwError err404
+     (False, True) -> return [filePath]
+     (True, False) -> do
+       fileNames <- liftIO $ listDirectory fullPath
+       return $ filePath:(map ((filePath ++ "/") ++) fileNames)
+     (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
 
+  for files $ 
+      liftIO . getPropResults propNames
