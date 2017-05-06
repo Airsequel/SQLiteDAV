@@ -248,9 +248,10 @@ doPropFind urlPath doc = do
   --TODO - check that the xml path element names are all correct....
   let propNames = [qName $ elName x | Elem x <- concat $ map elContent $ [x | Elem x <- elContent doc]]
   liftIO $ putStrLn $ "In doPropFind: " ++ show propNames
-  let filePath = "/" ++ intercalate "/" urlPath
+  let relPath = concat $ map ("/" ++) urlPath
 
-  let fullPath=fileBase++filePath
+  let fullPath=fileBase++relPath
+  liftIO $ putStrLn $ "relPath: " ++ relPath
   liftIO $ putStrLn $ "fullPath: " ++ fullPath
   isDir <- liftIO $ doesDirectoryExist fullPath
   isFile <- liftIO $ doesFileExist fullPath
@@ -258,10 +259,10 @@ doPropFind urlPath doc = do
   files <- 
     case (isDir, isFile) of
      (False, False) -> throwError err404
-     (False, True) -> return [filePath]
+     (False, True) -> return [relPath]
      (True, False) -> do
        fileNames <- liftIO $ listDirectory fullPath
-       return $ filePath:(map ((filePath ++ "/") ++) fileNames)
+       return $ relPath:(map ((relPath ++ "/") ++) fileNames)
      (True, True) -> error $ "internal logic error, getObject called on object that is both file and dir: " ++ fullPath
 
   for files $ 
