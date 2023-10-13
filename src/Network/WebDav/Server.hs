@@ -52,7 +52,12 @@ webDavServer =
             :<|> doDelete
             :<|> doMove
             :<|> doCopy
+            :<|> doOptions
         )
+
+
+doOptions :: [String] -> Handler ()
+doOptions _ = return ()
 
 
 doMove :: [String] -> Maybe String -> Handler ()

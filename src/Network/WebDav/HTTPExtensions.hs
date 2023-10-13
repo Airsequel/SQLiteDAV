@@ -62,15 +62,30 @@ type Copy = Verb 'COPY 200
 type Move = Verb 'MOVE 200
 
 
-data XML = XML
+data AppXML = AppXML
 
 
-instance MimeUnrender XML Element where
-  mimeUnrender _ x =
-    case parseXMLDoc x of
-      Nothing -> Left $ "Bad XML Input: " ++ show x
-      Just doc -> Right doc
+xmlMimeUnrender x =
+  case parseXMLDoc x of
+    Nothing -> Left $ "Bad XML Input: " ++ show x
+    Just doc -> Right doc
 
 
-instance Accept XML where
+instance MimeUnrender AppXML Element where
+  mimeUnrender _ = xmlMimeUnrender
+
+
+instance Accept AppXML where
   contentType _ = "application/xml"
+
+
+-- Used by macOS's Finder
+data TextXML = TextXML
+
+
+instance MimeUnrender TextXML Element where
+  mimeUnrender _ = xmlMimeUnrender
+
+
+instance Accept TextXML where
+  contentType _ = "text/xml"

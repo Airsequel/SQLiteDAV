@@ -87,14 +87,22 @@ te name attrs text =
     }
 
 
-instance MimeRender XML [PropResults] where
-  mimeRender _ items =
-    Lazy.Char8.pack
-      $ showTopElement
-      $ e
-        "multistatus"
-        [Attr (unqual "xmlns:D") "DAV:"]
-      $ map propResultsToXml items
+xmlMimeRender :: [PropResults] -> Lazy.Char8.ByteString
+xmlMimeRender items =
+  Lazy.Char8.pack
+    $ showTopElement
+    $ e
+      "multistatus"
+      [Attr (unqual "xmlns:D") "DAV:"]
+    $ map propResultsToXml items
+
+
+instance MimeRender AppXML [PropResults] where
+  mimeRender _ = xmlMimeRender
+
+
+instance MimeRender TextXML [PropResults] where
+  mimeRender _ = xmlMimeRender
 
 
 propResultsToXml :: PropResults -> Element
