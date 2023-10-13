@@ -1,57 +1,103 @@
-name:                webdavServer
-version:             0.1.0.0
--- synopsis:
--- description:
-homepage:            https://github.com/jamshidh/webdavServer#readme
-license:             BSD3
-license-file:        LICENSE
-author:              Jamshid
-copyright:           2017 Jamshid
-category:            Web
-build-type:          Simple
-extra-source-files:  README.md
-cabal-version:       >=1.10
+cabal-version: 1.12
 
-library
-  hs-source-dirs:      src
-  exposed-modules:     Network.WebDav.API
-                       Network.WebDav.Constants
-                       Network.WebDav.HTTPExtensions
-                       Network.WebDav.Properties
-                       Network.WebDav.Server
-  build-depends:       base >= 4.7 && < 5
-                     , bytestring
-                     , directory
-                     , filepath
-                     , http-types
-                     , servant-foreign
-                     , servant-options
-                     , servant-server
-                     , time
-                     , unix
-                     , wai-extra
-                     , xml
-  default-language:    Haskell2010
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
 
-executable webdavServer-exe
-  hs-source-dirs:      app
-  main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  build-depends:       base
-                     , wai-extra
-                     , warp
-                     , webdavServer
-  default-language:    Haskell2010
-
-test-suite webdavServer-test
-  type:                exitcode-stdio-1.0
-  hs-source-dirs:      test
-  main-is:             Spec.hs
-  build-depends:       base
-                     , webdavServer
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  default-language:    Haskell2010
+name:           webdavServer
+version:        0.1.0.0
+category:       Web
+homepage:       https://github.com/jamshidh/webdavServer#readme
+bug-reports:    https://github.com/jamshidh/webdavServer/issues
+author:         Jamshid
+maintainer:     Jamshid
+copyright:      2017 Jamshid
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
 
 source-repository head
-  type:     git
-  location: https://github.com/jamshid/webdavServer
+  type: git
+  location: https://github.com/jamshidh/webdavServer
+
+library
+  exposed-modules:
+      Network.WebDav.API
+      Network.WebDav.Constants
+      Network.WebDav.HTTPExtensions
+      Network.WebDav.Properties
+      Network.WebDav.Server
+  other-modules:
+      Paths_webdavServer
+  hs-source-dirs:
+      src
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , bytestring
+    , directory
+    , filepath
+    , http-types
+    , servant-foreign
+    , servant-options
+    , servant-server
+    , text
+    , time
+    , unix
+    , wai-extra
+    , xml
+  default-language: GHC2021
+
+executable webdavServer-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_webdavServer
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , base
+    , bytestring
+    , directory
+    , filepath
+    , http-types
+    , servant-foreign
+    , servant-options
+    , servant-server
+    , text
+    , time
+    , unix
+    , wai-extra
+    , warp
+    , webdavServer
+    , xml
+  default-language: GHC2021
+
+test-suite webdavServer-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_webdavServer
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , base
+    , bytestring
+    , directory
+    , filepath
+    , http-types
+    , servant-foreign
+    , servant-options
+    , servant-server
+    , text
+    , time
+    , unix
+    , wai-extra
+    , webdavServer
+    , xml
+  default-language: GHC2021

@@ -1,0 +1,66 @@
+name: webdavServer
+version: '0.1.0.0'
+homepage: https://github.com/jamshidh/webdavServer#readme
+license: BSD3
+license-file: LICENSE
+author: Jamshid
+copyright: 2017 Jamshid
+category: Web
+extra-source-files:
+  - README.md
+
+dependencies:
+  - aeson
+  - base >= 4.7 && < 5
+  - bytestring
+  - directory
+  - filepath
+  - http-types
+  - servant-foreign
+  - servant-options
+  - servant-server
+  - time
+  - unix
+  - text
+  - wai-extra
+  - xml
+
+library:
+  source-dirs: src
+  exposed-modules:
+    - Network.WebDav.API
+    - Network.WebDav.Constants
+    - Network.WebDav.HTTPExtensions
+    - Network.WebDav.Properties
+    - Network.WebDav.Server
+  language: GHC2021
+
+executables:
+  webdavServer-exe:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - base
+      - wai-extra
+      - warp
+      - webdavServer
+    language: GHC2021
+
+tests:
+  webdavServer-test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - base
+      - webdavServer
+    language: GHC2021
+
+github: jamshidh/webdavServer
