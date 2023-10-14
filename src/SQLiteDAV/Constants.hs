@@ -1,10 +1,10 @@
-module Network.WebDav.Constants where
+module SQLiteDAV.Constants where
 
 import Protolude (FilePath, Text)
 
 
 dbPath :: FilePath
-dbPath = "/Users/adrian/Tests/webdavServer/test/data.sqlite"
+dbPath = "/Users/adrian/Projects/SQLiteDAV/test/data.sqlite"
 
 
 webBase :: Text

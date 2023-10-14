@@ -3,7 +3,7 @@
 {-# HLINT ignore "Use list comprehension" #-}
 {-# HLINT ignore "Use unless" #-}
 
-module Network.WebDav.Server where
+module SQLiteDAV.Server where
 
 import Protolude (
   Char,
@@ -58,9 +58,9 @@ import Debug.Trace (traceM, traceShowId, traceShowM)
 import Network.HTTP.Types.URI (urlDecode)
 import Network.Wai.Middleware.AddHeaders (addHeaders)
 import Network.Wai.Middleware.Servant.Options (provideOptions)
-import Network.WebDav.API (webDavAPI)
-import Network.WebDav.Constants (dbPath, webBase)
-import Network.WebDav.Properties (
+import SQLiteDAV.API (webDavAPI)
+import SQLiteDAV.Constants (dbPath, webBase)
+import SQLiteDAV.Properties (
   ItemType (File, Folder),
   PropResults (PropResults, itemType, propMissing, propName, props),
  )
@@ -324,3 +324,8 @@ quoteKeyword keyword =
   keyword
     & escDoubleQuotes
     & (\word -> "\"" <> word <> "\"")
+
+
+-- TODO: Support for `Prefer: depth-noroot` (https://www.rfc-editor.org/rfc/rfc8144.txt)
+-- TODO: No content response for options
+-- TODO: Only allow rowid tables, or tables with one primary key

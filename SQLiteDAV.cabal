@@ -4,33 +4,31 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 
-name:           webdavServer
+name:           SQLiteDAV
 version:        0.1.0.0
-category:       Web
-homepage:       https://github.com/jamshidh/webdavServer#readme
-bug-reports:    https://github.com/jamshidh/webdavServer/issues
-author:         Jamshid
-maintainer:     Jamshid
-copyright:      2017 Jamshid
-license:        BSD3
-license-file:   LICENSE
+category:       Web, Database
+homepage:       https://github.com/Airsequel/SQLiteDAV#readme
+bug-reports:    https://github.com/Airsequel/SQLiteDAV/issues
+author:         Adrian Sieber
+maintainer:     Adrian Sieber
+license:        MIT
 build-type:     Simple
 extra-source-files:
     README.md
 
 source-repository head
   type: git
-  location: https://github.com/jamshidh/webdavServer
+  location: https://github.com/Airsequel/SQLiteDAV
 
 library
   exposed-modules:
-      Network.WebDav.API
-      Network.WebDav.Constants
-      Network.WebDav.HTTPExtensions
-      Network.WebDav.Properties
-      Network.WebDav.Server
+      SQLiteDAV.API
+      SQLiteDAV.Constants
+      SQLiteDAV.HTTPExtensions
+      SQLiteDAV.Properties
+      SQLiteDAV.Server
   other-modules:
-      Paths_webdavServer
+      Paths_SQLiteDAV
   hs-source-dirs:
       src
   default-extensions:
@@ -55,10 +53,10 @@ library
     , xml
   default-language: GHC2021
 
-executable webdavServer-exe
+executable sqlitedav
   main-is: Main.hs
   other-modules:
-      Paths_webdavServer
+      Paths_SQLiteDAV
   hs-source-dirs:
       app
   default-extensions:
@@ -66,8 +64,9 @@ executable webdavServer-exe
       OverloadedStrings
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      aeson
-    , base
+      SQLiteDAV
+    , aeson
+    , base >=4.7 && <5
     , bytestring
     , directory
     , filepath
@@ -82,24 +81,24 @@ executable webdavServer-exe
     , unix
     , wai-extra
     , warp
-    , webdavServer
     , xml
   default-language: GHC2021
 
-test-suite webdavServer-test
+test-suite sqlitedav-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      Paths_webdavServer
+      Paths_SQLiteDAV
   hs-source-dirs:
       test
   default-extensions:
       NoImplicitPrelude
       OverloadedStrings
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -main-is Spec
   build-depends:
-      aeson
-    , base
+      SQLiteDAV
+    , aeson
+    , base >=4.7 && <5
     , bytestring
     , directory
     , filepath
@@ -113,6 +112,5 @@ test-suite webdavServer-test
     , time
     , unix
     , wai-extra
-    , webdavServer
     , xml
   default-language: GHC2021

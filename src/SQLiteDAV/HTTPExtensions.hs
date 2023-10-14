@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Network.WebDav.HTTPExtensions where
+module SQLiteDAV.HTTPExtensions where
 
 import Protolude (Either (..), Maybe (..), show, ($), (++))
 import Servant (

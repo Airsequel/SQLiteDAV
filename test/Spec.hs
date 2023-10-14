@@ -1,6 +1,7 @@
 module Spec where
 
+import Protolude (IO, putText)
 
 main :: IO ()
 main =
-  putStrLn "Test suite not yet implemented"
+  putText "Test suite not yet implemented"

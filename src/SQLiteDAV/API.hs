@@ -1,14 +1,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExplicitNamespaces #-}
 
-module Network.WebDav.API where
+module SQLiteDAV.API where
 
 import Data.ByteString (ByteString)
 
 import Protolude (Char)
 
 import Data.Text (Text)
-import Network.WebDav.HTTPExtensions (
+import SQLiteDAV.HTTPExtensions (
   AppXML,
   Copy,
   Mkcol,
@@ -16,7 +16,7 @@ import Network.WebDav.HTTPExtensions (
   Propfind,
   TextXML,
  )
-import Network.WebDav.Properties (PropResults)
+import SQLiteDAV.Properties (PropResults)
 import Servant (
   CaptureAll,
   Delete,

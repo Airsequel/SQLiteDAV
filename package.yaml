@@ -1,11 +1,10 @@
-name: webdavServer
+name: SQLiteDAV
 version: '0.1.0.0'
-homepage: https://github.com/jamshidh/webdavServer#readme
-license: BSD3
-license-file: LICENSE
-author: Jamshid
-copyright: 2017 Jamshid
-category: Web
+homepage: https://github.com/Airsequel/SQLiteDAV#readme
+github: Airsequel/SQLiteDAV
+license: MIT
+author: Adrian Sieber
+category: Web, Database
 extra-source-files:
   - README.md
 
@@ -34,15 +33,15 @@ default-extensions:
 library:
   source-dirs: src
   exposed-modules:
-    - Network.WebDav.API
-    - Network.WebDav.Constants
-    - Network.WebDav.HTTPExtensions
-    - Network.WebDav.Properties
-    - Network.WebDav.Server
+    - SQLiteDAV.API
+    - SQLiteDAV.Constants
+    - SQLiteDAV.HTTPExtensions
+    - SQLiteDAV.Properties
+    - SQLiteDAV.Server
   language: GHC2021
 
 executables:
-  webdavServer-exe:
+  sqlitedav:
     main: Main.hs
     source-dirs: app
     ghc-options:
@@ -50,23 +49,20 @@ executables:
       - -rtsopts
       - -with-rtsopts=-N
     dependencies:
-      - base
       - wai-extra
       - warp
-      - webdavServer
+      - SQLiteDAV
     language: GHC2021
 
 tests:
-  webdavServer-test:
+  sqlitedav-test:
     main: Spec.hs
     source-dirs: test
     ghc-options:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
+      - -main-is Spec
     dependencies:
-      - base
-      - webdavServer
+      - SQLiteDAV
     language: GHC2021
-
-github: jamshidh/webdavServer

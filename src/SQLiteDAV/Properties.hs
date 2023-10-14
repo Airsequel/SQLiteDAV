@@ -8,7 +8,7 @@
 
 {-# HLINT ignore "Use list comprehension" #-}
 
-module Network.WebDav.Properties where
+module SQLiteDAV.Properties where
 
 import Protolude (
   Char,
@@ -37,8 +37,8 @@ import Data.Text qualified as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Traversable (for)
 import GHC.Generics (Generic)
-import Network.WebDav.Constants (dbPath, webBase)
-import Network.WebDav.HTTPExtensions (AppXML, TextXML)
+import SQLiteDAV.Constants (dbPath, webBase)
+import SQLiteDAV.HTTPExtensions (AppXML, TextXML)
 import Protolude.Error (error)
 import Servant (MimeRender (..))
 import System.Directory (
