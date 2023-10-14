@@ -1,9 +1,11 @@
 module Network.WebDav.Constants where
 
-
-fileBase :: FilePath
-fileBase = "/usr/share"
+import Protolude (FilePath, Text)
 
 
-webBase :: String
+dbPath :: FilePath
+dbPath = "/Users/adrian/Tests/webdavServer/test/data.sqlite"
+
+
+webBase :: Text
 webBase = "http://127.0.0.1:20001"

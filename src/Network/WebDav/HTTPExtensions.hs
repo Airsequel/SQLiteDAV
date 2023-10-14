@@ -1,13 +1,17 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Network.WebDav.HTTPExtensions where
 
-import Servant
-import Servant.Foreign.Internal
-import Text.XML.Light
+import Protolude (Either (..), Maybe (..), show, ($), (++))
+import Servant (
+  Accept (contentType),
+  MimeUnrender (mimeUnrender),
+  ReflectMethod (..),
+  Verb,
+ )
+import Servant.Foreign.Internal ()
+import Text.XML.Light (Element, parseXMLDoc)
 
 
 data DavMethod

@@ -1,5 +1,7 @@
 module Main where
 
+import Protolude (IO, ($))
+
 import Network.Wai.Handler.Warp (run)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Network.WebDav.Server (webDavServer)

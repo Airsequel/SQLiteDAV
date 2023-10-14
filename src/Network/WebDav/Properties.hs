@@ -10,19 +10,44 @@
 
 module Network.WebDav.Properties where
 
-import Data.Aeson
+import Protolude (
+  Char,
+  Eq,
+  FilePath,
+  IO,
+  Maybe (..),
+  Show,
+  Text,
+  fmap,
+  not,
+  null,
+  pure,
+  putStrLn,
+  show,
+  ($),
+  (++),
+  (<&>),
+ )
+
+import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy.Char8 qualified as Lazy.Char8
-import Data.Either
-import Data.Time.Format
-import Data.Traversable
-import GHC.Generics
-import Network.WebDav.Constants
-import Network.WebDav.HTTPExtensions
-import Servant
-import System.Directory
-import System.FilePath.Posix
-import System.Posix
+import Data.Either (lefts, rights)
+import Data.Text qualified as T
+import Data.Time.Format (defaultTimeLocale, formatTime)
+import Data.Traversable (for)
+import GHC.Generics (Generic)
+import Network.WebDav.Constants (dbPath, webBase)
+import Network.WebDav.HTTPExtensions (AppXML, TextXML)
+import Protolude.Error (error)
+import Servant (MimeRender (..))
+import System.Directory (
+  doesDirectoryExist,
+  doesFileExist,
+  getModificationTime,
+ )
+import System.FilePath.Posix (takeExtension, takeFileName)
+import System.Posix (fileSize, getFileStatus)
 import Text.XML.Light (
   Attr (Attr),
   CData (CData),
@@ -35,6 +60,9 @@ import Text.XML.Light (
  )
 
 
+type String = [Char]
+
+
 instance FromJSON ByteString where
   parseJSON = error "FromJSON ByteString not implemented"
 
@@ -44,7 +72,7 @@ instance FromJSON Element where
 
 
 data ItemType = File | Folder
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 
 instance ToJSON ItemType
@@ -72,7 +100,7 @@ e name attrs content =
           , qPrefix = Just "D"
           }
     , elAttribs = attrs
-    , elContent = map Elem content
+    , elContent = content <&> Elem
     , elLine = Nothing
     }
 
@@ -94,7 +122,7 @@ xmlMimeRender items =
     $ e
       "multistatus"
       [Attr (unqual "xmlns:D") "DAV:"]
-    $ map propResultsToXml items
+    $ items <&> propResultsToXml
 
 
 instance MimeRender AppXML [PropResults] where
@@ -110,7 +138,7 @@ propResultsToXml PropResults{..} = do
   e
     "response"
     []
-    ( [ te "href" [] $ webBase ++ propName
+    ( [ te "href" [] $ "/" ++ propName
       , e
           "propstat"
           []
@@ -123,7 +151,7 @@ propResultsToXml PropResults{..} = do
                     Folder ->
                       [e "resourcetype" [] [e "collection" [] []]]
                 )
-                  ++ map (\(name, val) -> te name [] val) props
+                  ++ fmap (\(name, val) -> te name [] val) props
               )
           ]
       ]
@@ -133,7 +161,7 @@ propResultsToXml PropResults{..} = do
                     "propstat"
                     []
                     [ te "status" [] "HTTP/1.1 404 Not Found"
-                    , e "prop" [] $ map (\x -> e x [] []) propMissing
+                    , e "prop" [] $ fmap (\x -> e x [] []) propMissing
                     , te "responsedescription" [] "Property was not found"
                     ]
                 ]
@@ -142,59 +170,30 @@ propResultsToXml PropResults{..} = do
     )
 
 
-getPropResults :: [String] -> FilePath -> IO PropResults
-getPropResults propNames filePath = do
-  let fullPath = fileBase ++ filePath
-  isDir <- doesDirectoryExist fullPath
-  isFile <- doesFileExist fullPath
-  let theType =
-        case (isDir, isFile) of
-          (False, False) -> error $ "file doesn't exist: " ++ show fullPath
-          (False, True) -> File
-          (True, False) -> Folder
-          (True, True) ->
-            error $
-              "internal logic error, getObject called on object \
-              \that is both file and dir: "
-                ++ fullPath
-
-  results <-
-    for propNames $ \propName -> do
-      result <- getProp filePath propName
-      case result of
-        Nothing -> return $ Left propName
-        Just x -> return $ Right (propName, x)
-
-  return
-    PropResults
-      { propName = filePath
-      , itemType = theType
-      , props = rights results
-      , propMissing = lefts results
-      }
-
-
-getProp :: FilePath -> String -> IO (Maybe String)
-getProp filePath "getlastmodified" = do
-  lastModified <- getModificationTime $ fileBase ++ filePath
-  return $
-    Just $
-      formatTime
-        defaultTimeLocale
-        "%a, %e %b %Y %H:%M:%S %Z"
-        lastModified
-getProp _ "creationdate" =
-  return Nothing -- Unix doesn't seem to store creation date
-getProp filePath "displayname" = return $ Just $ takeFileName filePath
-getProp filePath "getcontentlength" = do
-  stat <- getFileStatus $ fileBase ++ filePath
-  return $ Just $ show $ fileSize stat
-getProp filePath "getcontenttype" = do
-  case takeExtension filePath of
-    ".txt" -> return $ Just "text/plain"
-    _ -> return Nothing
-getProp _ "resourcetype" = return Nothing -- this is handled elsewhere
-getProp _ prop = do
-  putStrLn $
-    "Warning: server requested a property that we do not handle: " ++ prop
-  return Nothing
+getProp :: FilePath -> Text -> IO (Maybe Text)
+getProp filePath prop = case prop of
+  "getlastmodified" -> do
+    lastModified <- getModificationTime $ dbPath ++ filePath
+    pure $
+      Just $
+        T.pack $
+          formatTime
+            defaultTimeLocale
+            "%a, %e %b %Y %H:%M:%S %Z"
+            lastModified
+  "creationdate" -> pure Nothing -- Unix doesn't seem to store creation date
+  "displayname" -> pure $ Just $ T.pack $ takeFileName filePath
+  "getcontentlength" -> do
+    stat <- getFileStatus $ dbPath ++ filePath
+    pure $ Just $ show $ fileSize stat
+  "getcontenttype" -> do
+    case takeExtension filePath of
+      ".txt" -> pure $ Just "text/plain"
+      _ -> pure Nothing
+  "resourcetype" -> pure Nothing -- this is handled elsewhere
+  _ -> do
+    putStrLn $
+      "Warning: Server requested a property \
+      \that we do not handle: "
+        ++ T.unpack prop
+    pure Nothing

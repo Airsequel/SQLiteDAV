@@ -16,14 +16,20 @@ dependencies:
   - directory
   - filepath
   - http-types
+  - protolude
   - servant-foreign
   - servant-options
   - servant-server
+  - sqlite-simple
+  - text
   - time
   - unix
-  - text
   - wai-extra
   - xml
+
+default-extensions:
+  - NoImplicitPrelude
+  - OverloadedStrings
 
 library:
   source-dirs: src
