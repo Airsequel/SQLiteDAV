@@ -8,6 +8,7 @@ module SQLiteDAV.Server where
 import Protolude (
   Char,
   IO,
+  Integer,
   Maybe,
   Traversable (traverse),
   concat,
@@ -15,8 +16,11 @@ import Protolude (
   elem,
   filter,
   fromMaybe,
+  fst,
   headMay,
+  mempty,
   pure,
+  readMaybe,
   show,
   snd,
   zip,
@@ -53,7 +57,7 @@ import Database.SQLite.Simple (
   withConnection,
   withStatement,
  )
-import Database.SQLite.Simple.Types (Only)
+import Database.SQLite.Simple.Types (Only (Only))
 import Debug.Trace (traceM, traceShowId, traceShowM)
 import Network.HTTP.Types.URI (urlDecode)
 import Network.Wai.Middleware.AddHeaders (addHeaders)
@@ -69,6 +73,7 @@ import Servant (
   Handler,
   NoContent (NoContent),
   err404,
+  errBody,
   serve,
   throwError,
   (:<|>) ((:<|>)),
@@ -191,7 +196,7 @@ sqlDataToText sqlData =
 getTableRows :: Text -> IO [[(Text, SQLData)]]
 getTableRows tableName =
   withConnection "test/data.sqlite" $ \conn -> do
-    let sqlQuery = Query $ "SELECT rowid, * FROM " <> tableName
+    let sqlQuery = Query $ "SELECT rowid, * FROM " <> quoteKeyword tableName
 
     columns <- withStatement conn sqlQuery $ \stmt -> do
       numCols <- columnCount stmt
@@ -201,6 +206,27 @@ getTableRows tableName =
     tableRows :: [[SQLData]] <- query_ conn sqlQuery
 
     pure $ tableRows <&> zip columns
+
+
+getRowColumns :: Text -> Integer -> IO [(Text, SQLData)]
+getRowColumns tableName rowid =
+  withConnection "test/data.sqlite" $ \conn -> do
+    let sqlQuery =
+          Query
+            $ "SELECT * FROM "
+            <> quoteKeyword tableName
+            <> " WHERE rowid = ?"
+
+    columns <- withStatement conn sqlQuery $ \stmt -> do
+      numCols <- columnCount stmt
+      let colNums = [0 .. (numCols - 1)]
+      colNums & traverse (columnName stmt)
+
+    tableRows :: [[SQLData]] <- query conn sqlQuery (Only rowid)
+
+    case tableRows of
+      [] -> pure []
+      [row] -> pure $ row & zip columns
 
 
 getPropsForTable :: Maybe Text -> [String] -> String -> Handler [PropResults]
@@ -216,44 +242,86 @@ getPropsForTable depth propNames tableName = do
     depthLow = depth <&> toLower
 
   when
-    ( "._" `isPrefixOf` tableName
-        || ".metadata_never_index" `isPrefixOf` tableName
-        || ".Spotlight-V100" `isPrefixOf` tableName
-        || ".hidden" `isPrefixOf` tableName
+    ( ("._" `isPrefixOf` tableName)
+        || (".metadata_never_index" `isPrefixOf` tableName)
+        || (".Spotlight-V100" `isPrefixOf` tableName)
+        || (".hidden" `isPrefixOf` tableName)
     )
     $ throwError err404
 
-  traceShowM depthLow
+  tableRows <- liftIO $ getTableRows (T.pack tableName)
 
-  tableRows <- liftIO $ getTableRows (quoteKeyword (T.pack tableName))
+  let
+    getPropName tableRow =
+      tableName
+        ++ "/"
+        ++ ( tableRow
+              & headMay
+              & fromMaybe ("ERROR", SQLText "ERROR")
+              & snd
+              & sqlDataToText
+              & T.unpack
+           )
+    ioTableRows =
+      tableRows
+        <&> ( \tableRow ->
+                PropResults
+                  { propName = getPropName tableRow
+                  , itemType = Folder
+                  , props = propNames & mapMaybe (propNameToEntry Folder)
+                  , propMissing = propNames & keepMissingNames Folder
+                  }
+            )
 
-  traceShowM tableRows
+  pure
+    $ rootPropResult
+    : if depthLow /= Just "1" && depthLow /= Just "infinity"
+      then []
+      else ioTableRows
 
-  let ioTableRows =
-        tableRows
-          <&> ( \tableRow ->
-                  PropResults
-                    { propName =
-                        tableName
-                          ++ "/"
-                          ++ ( tableRow
-                                & headMay
-                                & fromMaybe ("ERROR", SQLText "ERROR")
-                                & snd
-                                & sqlDataToText
-                                & T.unpack
-                             )
-                    , itemType = Folder
-                    , props = propNames & mapMaybe (propNameToEntry Folder)
-                    , propMissing = propNames & keepMissingNames Folder
-                    }
-              )
 
-  pure $
-    rootPropResult
-      : if depthLow /= Just "1" && depthLow /= Just "infinity"
-        then []
-        else ioTableRows
+getPropsForRow
+  :: Maybe Text
+  -> [String]
+  -> String
+  -> Maybe Integer
+  -> Handler [PropResults]
+getPropsForRow depth propNames tableName rowidMb = do
+  let
+    rowid = case rowidMb of
+      Nothing -> throw $ err404{errBody = "Row not found"}
+      Just rowidInteger -> rowidInteger
+
+    rootPropResult =
+      PropResults
+        { propName = tableName <> "/" <> show rowid
+        , itemType = Folder
+        , props = propNames & mapMaybe (propNameToEntry Folder)
+        , propMissing = propNames & keepMissingNames Folder
+        }
+    depthLow = depth <&> toLower
+
+  rowColumns <- liftIO $ getRowColumns (T.pack tableName) rowid
+
+  let
+    getPropName tableName colName =
+      tableName ++ "/" ++ show rowid ++ "/" ++ colName
+    ioRowColumns =
+      rowColumns
+        <&> ( \rowColumn ->
+                PropResults
+                  { propName = getPropName tableName (T.unpack $ fst rowColumn)
+                  , itemType = File
+                  , props = propNames & mapMaybe (propNameToEntry File)
+                  , propMissing = propNames & keepMissingNames File
+                  }
+            )
+
+  pure
+    $ rootPropResult
+    : if depthLow /= Just "1" && depthLow /= Just "infinity"
+      then []
+      else ioRowColumns
 
 
 doPropFind :: [String] -> Maybe Text -> Element -> Handler [PropResults]
@@ -262,11 +330,6 @@ doPropFind urlPath depth doc = do
         [ qName $ elName x
         | Elem x <- concatMap elContent ([x | Elem x <- elContent doc])
         ]
-
-  traceM $
-    "doPropFind:"
-      ++ ("\nurlPath: " ++ show urlPath)
-      ++ ("\npropNames: " ++ show propNames)
 
   case urlPath of
     [] -> do
@@ -285,32 +348,29 @@ doPropFind urlPath depth doc = do
         liftIO $ withConnection "test/data.sqlite" $ \conn ->
           query_ conn "SELECT name FROM sqlite_master WHERE type == 'table'"
 
-      pure $
-        traceShowId $
-          rootPropResult
-            : if depthLow /= Just "1" && depthLow /= Just "infinity"
-              then []
-              else
-                tableRows
-                  & concat
-                  <&> \table ->
-                    PropResults
-                      { propName = T.unpack table
-                      , itemType = Folder
-                      , props = propNames & mapMaybe (propNameToEntry Folder)
-                      , propMissing = propNames & keepMissingNames Folder
-                      }
+      pure
+        $ rootPropResult
+        : if depthLow /= Just "1" && depthLow /= Just "infinity"
+          then []
+          else
+            tableRows
+              & concat
+              <&> \table ->
+                PropResults
+                  { propName = T.unpack table
+                  , itemType = Folder
+                  , props = propNames & mapMaybe (propNameToEntry Folder)
+                  , propMissing = propNames & keepMissingNames Folder
+                  }
     --
     [tableName] ->
       getPropsForTable depth propNames tableName
     --
     [tableName, ""] ->
-      -- TODO
-      pure []
+      getPropsForTable depth propNames tableName
     --
-    [tableName, rowName] ->
-      -- TODO
-      pure []
+    tableName : rowName : rest ->
+      getPropsForRow depth propNames tableName (readMaybe rowName)
 
 
 -- | Escape double quotes in SQL strings
