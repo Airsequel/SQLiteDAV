@@ -23,6 +23,7 @@ import Servant (
   Get,
   Header,
   JSON,
+  NoContent,
   OctetStream,
   PlainText,
   Proxy (..),
@@ -64,7 +65,7 @@ type WebDavAPI =
       :> Header "Destination" String
       :> Copy '[JSON] ()
     :<|> CaptureAll "segments" String
-      :> Options '[JSON] ()
+      :> Options '[JSON] NoContent
 
 
 --  :<|> Proppatch '[JSON] [Int]

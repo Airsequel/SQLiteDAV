@@ -67,6 +67,7 @@ import SQLiteDAV.Properties (
 import Servant (
   Application,
   Handler,
+  NoContent (NoContent),
   err404,
   serve,
   throwError,
@@ -93,24 +94,24 @@ type String = [Char]
 
 webDavServer :: Application
 webDavServer =
-  addHeaders [("Dav", "1, 2, ordered-collections")] $
-    provideOptions webDavAPI $
-      serve
-        webDavAPI
-        ( doMkCol
-            :<|> doPropFind
-            :<|> doGet
-            :<|> doPut
-            :<|> doDelete
-            :<|> doMove
-            :<|> doCopy
-            :<|> doOptions
-        )
+  addHeaders [("Dav", "1, 2, ordered-collections")]
+    $ provideOptions webDavAPI
+    $ serve
+      webDavAPI
+      ( doMkCol
+          :<|> doPropFind
+          :<|> doGet
+          :<|> doPut
+          :<|> doDelete
+          :<|> doMove
+          :<|> doCopy
+          :<|> doOptions
+      )
 
 
-doOptions :: [String] -> Handler ()
-doOptions _ = do
-  pure ()
+doOptions :: [String] -> Handler NoContent
+doOptions _ =
+  pure NoContent
 
 
 doMove :: [String] -> Maybe String -> Handler ()

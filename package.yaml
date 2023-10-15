@@ -49,9 +49,9 @@ executables:
       - -rtsopts
       - -with-rtsopts=-N
     dependencies:
+      - SQLiteDAV
       - wai-extra
       - warp
-      - SQLiteDAV
     language: GHC2021
 
 tests:
@@ -64,5 +64,8 @@ tests:
       - -with-rtsopts=-N
       - -main-is Spec
     dependencies:
+      - hspec
+      - hspec-wai
       - SQLiteDAV
+      - wai
     language: GHC2021

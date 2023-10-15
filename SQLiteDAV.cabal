@@ -102,6 +102,8 @@ test-suite sqlitedav-test
     , bytestring
     , directory
     , filepath
+    , hspec
+    , hspec-wai
     , http-types
     , protolude
     , servant-foreign
@@ -111,6 +113,7 @@ test-suite sqlitedav-test
     , text
     , time
     , unix
+    , wai
     , wai-extra
     , xml
   default-language: GHC2021
