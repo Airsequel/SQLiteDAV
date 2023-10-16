@@ -7,6 +7,7 @@ module SQLiteDAV.Server where
 
 import Protolude (
   Char,
+  FilePath,
   IO,
   Integer,
   Maybe,
@@ -63,15 +64,11 @@ import Network.HTTP.Types.URI (urlDecode)
 import Network.Wai.Middleware.AddHeaders (addHeaders)
 import Network.Wai.Middleware.Servant.Options (provideOptions)
 import SQLiteDAV.API (webDavAPI)
-import SQLiteDAV.Constants (dbPath, webBase)
-import SQLiteDAV.Properties (
-  ItemType (File, Folder),
-  PropResults (PropResults, itemType, propMissing, propName, props),
- )
 import Servant (
   Application,
   Handler,
   NoContent (NoContent),
+  err400,
   err404,
   errBody,
   serve,
@@ -93,19 +90,25 @@ import Text.XML.Light (
   QName (qName),
  )
 
+import SQLiteDAV.Properties (
+  ItemType (File, Folder),
+  PropResults (PropResults, itemType, propMissing, propName, props),
+ )
+import SQLiteDAV.Utils (sqlDataToText)
+
 
 type String = [Char]
 
 
-webDavServer :: Application
-webDavServer =
+webDavServer :: FilePath -> Application
+webDavServer dbPath =
   addHeaders [("Dav", "1, 2, ordered-collections")]
     $ provideOptions webDavAPI
     $ serve
       webDavAPI
       ( doMkCol
-          :<|> doPropFind
-          :<|> doGet
+          :<|> doPropFind dbPath
+          :<|> doGet dbPath
           :<|> doPut
           :<|> doDelete
           :<|> doMove
@@ -137,9 +140,36 @@ doPut urlPath body = do
   pure ()
 
 
-doGet :: [String] -> Handler String
-doGet urlPath =
-  pure "FILE CONTENT"
+doGet :: FilePath -> [String] -> Handler SQLData
+doGet dbPath urlPath = do
+  case urlPath of
+    tableName : rowidStr : colName : _rest ->
+      case readMaybe rowidStr of
+        Nothing ->
+          throwError err400{errBody = "Invalid rowid"}
+        Just (rowid :: Integer) -> do
+          colResult <- liftIO $ withConnection dbPath $ \conn -> do
+            let sqlQuery =
+                  Query
+                    $ "SELECT "
+                    <> quoteKeyword (T.pack colName)
+                    <> " FROM "
+                    <> quoteKeyword (T.pack tableName)
+                    <> " WHERE rowid == ?"
+            query conn sqlQuery (Only rowid)
+
+          case colResult :: [Only SQLData] of
+            [] ->
+              throwError err404{errBody = "Row not found"}
+            [Only colData] ->
+              pure colData
+            _ ->
+              throwError
+                err400
+                  { errBody = "Multiple rows with the same rowid exist"
+                  }
+    _ ->
+      throwError err404
 
 
 doDelete :: [String] -> Handler ()
@@ -182,20 +212,10 @@ keepMissingNames itemType propNames =
   in  propNames & filter (`elem` disallowed)
 
 
-sqlDataToText :: SQLData -> Text
-sqlDataToText sqlData =
-  case sqlData of
-    SQLText text -> text
-    SQLInteger int -> T.pack $ show int
-    SQLFloat float -> T.pack $ show float
-    SQLBlob blob -> T.pack $ show blob
-    SQLNull -> "NULL"
-
-
 -- | Get the rows of a table as a list of lists of (col_name, SQLData) pairs
-getTableRows :: Text -> IO [[(Text, SQLData)]]
-getTableRows tableName =
-  withConnection "test/data.sqlite" $ \conn -> do
+getTableRows :: FilePath -> Text -> IO [[(Text, SQLData)]]
+getTableRows dbPath tableName =
+  withConnection dbPath $ \conn -> do
     let sqlQuery = Query $ "SELECT rowid, * FROM " <> quoteKeyword tableName
 
     columns <- withStatement conn sqlQuery $ \stmt -> do
@@ -208,9 +228,9 @@ getTableRows tableName =
     pure $ tableRows <&> zip columns
 
 
-getRowColumns :: Text -> Integer -> IO [(Text, SQLData)]
-getRowColumns tableName rowid =
-  withConnection "test/data.sqlite" $ \conn -> do
+getRowColumns :: FilePath -> Text -> Integer -> IO [(Text, SQLData)]
+getRowColumns dbPath tableName rowid =
+  withConnection dbPath $ \conn -> do
     let sqlQuery =
           Query
             $ "SELECT * FROM "
@@ -229,8 +249,9 @@ getRowColumns tableName rowid =
       [row] -> pure $ row & zip columns
 
 
-getPropsForTable :: Maybe Text -> [String] -> String -> Handler [PropResults]
-getPropsForTable depth propNames tableName = do
+getPropsForTable :: FilePath ->
+   Maybe Text -> [String] -> String -> Handler [PropResults]
+getPropsForTable dbPath depth propNames tableName = do
   let
     rootPropResult =
       PropResults
@@ -249,7 +270,7 @@ getPropsForTable depth propNames tableName = do
     )
     $ throwError err404
 
-  tableRows <- liftIO $ getTableRows (T.pack tableName)
+  tableRows <- liftIO $ getTableRows dbPath (T.pack tableName)
 
   let
     getPropName tableRow =
@@ -281,12 +302,12 @@ getPropsForTable depth propNames tableName = do
 
 
 getPropsForRow
-  :: Maybe Text
+  :: FilePath -> Maybe Text
   -> [String]
   -> String
   -> Maybe Integer
   -> Handler [PropResults]
-getPropsForRow depth propNames tableName rowidMb = do
+getPropsForRow dbPath depth propNames tableName rowidMb = do
   let
     rowid = case rowidMb of
       Nothing -> throw $ err404{errBody = "Row not found"}
@@ -301,7 +322,7 @@ getPropsForRow depth propNames tableName rowidMb = do
         }
     depthLow = depth <&> toLower
 
-  rowColumns <- liftIO $ getRowColumns (T.pack tableName) rowid
+  rowColumns <- liftIO $ getRowColumns dbPath (T.pack tableName) rowid
 
   let
     getPropName tableName colName =
@@ -324,8 +345,13 @@ getPropsForRow depth propNames tableName rowidMb = do
       else ioRowColumns
 
 
-doPropFind :: [String] -> Maybe Text -> Element -> Handler [PropResults]
-doPropFind urlPath depth doc = do
+doPropFind
+  :: String
+  -> [String]
+  -> Maybe Text
+  -> Element
+  -> Handler [PropResults]
+doPropFind dbPath urlPath depth doc = do
   let propNames =
         [ qName $ elName x
         | Elem x <- concatMap elContent ([x | Elem x <- elContent doc])
@@ -345,7 +371,7 @@ doPropFind urlPath depth doc = do
         depthLow = depth <&> toLower
 
       (tableRows :: [[Text]]) <-
-        liftIO $ withConnection "test/data.sqlite" $ \conn ->
+        liftIO $ withConnection dbPath $ \conn ->
           query_ conn "SELECT name FROM sqlite_master WHERE type == 'table'"
 
       pure
@@ -364,13 +390,13 @@ doPropFind urlPath depth doc = do
                   }
     --
     [tableName] ->
-      getPropsForTable depth propNames tableName
+      getPropsForTable dbPath depth propNames tableName
     --
     [tableName, ""] ->
-      getPropsForTable depth propNames tableName
+      getPropsForTable dbPath depth propNames tableName
     --
     tableName : rowName : rest ->
-      getPropsForRow depth propNames tableName (readMaybe rowName)
+      getPropsForRow dbPath depth propNames tableName (readMaybe rowName)
 
 
 -- | Escape double quotes in SQL strings
@@ -385,7 +411,6 @@ quoteKeyword keyword =
   keyword
     & escDoubleQuotes
     & (\word -> "\"" <> word <> "\"")
-
 
 -- TODO: Support for `Prefer: depth-noroot` (https://www.rfc-editor.org/rfc/rfc8144.txt)
 -- TODO: No content response for options

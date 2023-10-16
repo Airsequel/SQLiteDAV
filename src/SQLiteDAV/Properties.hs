@@ -26,21 +26,21 @@ import Protolude (
   show,
   ($),
   (++),
+  (.),
   (<&>),
  )
 
-import Data.Aeson (FromJSON (parseJSON), ToJSON)
+import Data.Aeson (FromJSON (parseJSON), ToJSON, toJSON)
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy.Char8 qualified as Lazy.Char8
 import Data.Either (lefts, rights)
 import Data.Text qualified as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Traversable (for)
+import Database.SQLite.Simple (SQLData)
 import GHC.Generics (Generic)
-import SQLiteDAV.Constants (dbPath, webBase)
-import SQLiteDAV.HTTPExtensions (AppXML, TextXML)
 import Protolude.Error (error)
-import Servant (MimeRender (..))
+import Servant (MimeRender (..), PlainText)
 import System.Directory (
   doesDirectoryExist,
   doesFileExist,
@@ -58,6 +58,9 @@ import Text.XML.Light (
   showTopElement,
   unqual,
  )
+
+import SQLiteDAV.HTTPExtensions (AppXML, TextXML)
+import SQLiteDAV.Utils (sqlDataToFileContent)
 
 
 type String = [Char]
@@ -122,7 +125,8 @@ xmlMimeRender items =
     $ e
       "multistatus"
       [Attr (unqual "xmlns:D") "DAV:"]
-    $ items <&> propResultsToXml
+    $ items
+    <&> propResultsToXml
 
 
 instance MimeRender AppXML [PropResults] where
@@ -131,6 +135,14 @@ instance MimeRender AppXML [PropResults] where
 
 instance MimeRender TextXML [PropResults] where
   mimeRender _ = xmlMimeRender
+
+
+instance MimeRender PlainText SQLData where
+  mimeRender _ = sqlDataToFileContent
+
+
+instance ToJSON SQLData where
+  toJSON = error "ToJSON SQLData should not be necessary"
 
 
 propResultsToXml :: PropResults -> Element
@@ -170,17 +182,17 @@ propResultsToXml PropResults{..} = do
     )
 
 
-getProp :: FilePath -> Text -> IO (Maybe Text)
-getProp filePath prop = case prop of
+getProp :: FilePath -> FilePath -> Text -> IO (Maybe Text)
+getProp dbPath filePath prop = case prop of
   "getlastmodified" -> do
     lastModified <- getModificationTime $ dbPath ++ filePath
-    pure $
-      Just $
-        T.pack $
-          formatTime
-            defaultTimeLocale
-            "%a, %e %b %Y %H:%M:%S %Z"
-            lastModified
+    pure
+      $ Just
+      $ T.pack
+      $ formatTime
+        defaultTimeLocale
+        "%a, %e %b %Y %H:%M:%S %Z"
+        lastModified
   "creationdate" -> pure Nothing -- Unix doesn't seem to store creation date
   "displayname" -> pure $ Just $ T.pack $ takeFileName filePath
   "getcontentlength" -> do
@@ -192,8 +204,8 @@ getProp filePath prop = case prop of
       _ -> pure Nothing
   "resourcetype" -> pure Nothing -- this is handled elsewhere
   _ -> do
-    putStrLn $
-      "Warning: Server requested a property \
-      \that we do not handle: "
-        ++ T.unpack prop
+    putStrLn
+      $ "Warning: Server requested a property \
+        \that we do not handle: "
+      ++ T.unpack prop
     pure Nothing

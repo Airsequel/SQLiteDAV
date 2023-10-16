@@ -3,11 +3,11 @@
 
 module SQLiteDAV.API where
 
-import Data.ByteString (ByteString)
-
 import Protolude (Char)
 
+import Data.ByteString (ByteString)
 import Data.Text (Text)
+import Database.SQLite.Simple (SQLData)
 import SQLiteDAV.HTTPExtensions (
   AppXML,
   Copy,
@@ -52,7 +52,7 @@ type WebDavAPI =
       :> ReqBody '[AppXML, TextXML, JSON] Element
       :> Propfind '[AppXML, TextXML, JSON] [PropResults]
     :<|> CaptureAll "segments" String
-      :> Get '[PlainText, JSON] String
+      :> Get '[PlainText, JSON] SQLData
     :<|> CaptureAll "segments" String
       :> ReqBody '[OctetStream, JSON] ByteString
       :> Put '[JSON] ()

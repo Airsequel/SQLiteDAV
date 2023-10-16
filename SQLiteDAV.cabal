@@ -23,16 +23,17 @@ source-repository head
 library
   exposed-modules:
       SQLiteDAV.API
-      SQLiteDAV.Constants
       SQLiteDAV.HTTPExtensions
       SQLiteDAV.Properties
       SQLiteDAV.Server
   other-modules:
+      SQLiteDAV.Utils
       Paths_SQLiteDAV
   hs-source-dirs:
       src
   default-extensions:
       NoImplicitPrelude
+      OverloadedRecordDot
       OverloadedStrings
   build-depends:
       aeson
@@ -61,6 +62,7 @@ executable sqlitedav
       app
   default-extensions:
       NoImplicitPrelude
+      OverloadedRecordDot
       OverloadedStrings
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
@@ -71,6 +73,7 @@ executable sqlitedav
     , directory
     , filepath
     , http-types
+    , optparse-generic
     , protolude
     , servant-foreign
     , servant-options
@@ -93,6 +96,7 @@ test-suite sqlitedav-test
       test
   default-extensions:
       NoImplicitPrelude
+      OverloadedRecordDot
       OverloadedStrings
   ghc-options: -threaded -rtsopts -with-rtsopts=-N -main-is Spec
   build-depends:

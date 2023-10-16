@@ -28,13 +28,13 @@ dependencies:
 
 default-extensions:
   - NoImplicitPrelude
+  - OverloadedRecordDot
   - OverloadedStrings
 
 library:
   source-dirs: src
   exposed-modules:
     - SQLiteDAV.API
-    - SQLiteDAV.Constants
     - SQLiteDAV.HTTPExtensions
     - SQLiteDAV.Properties
     - SQLiteDAV.Server
@@ -49,6 +49,7 @@ executables:
       - -rtsopts
       - -with-rtsopts=-N
     dependencies:
+      - optparse-generic
       - SQLiteDAV
       - wai-extra
       - warp

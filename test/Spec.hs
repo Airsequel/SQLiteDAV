@@ -29,6 +29,7 @@ import Network.Wai ()
 import Network.Wai.Test (SResponse (..))
 import Test.Hspec (Spec, describe, fit, hspec, it)
 import Test.Hspec.Wai (
+  MatchHeader,
   ResponseMatcher (
     ResponseMatcher,
     matchBody,
@@ -36,6 +37,7 @@ import Test.Hspec.Wai (
     matchStatus
   ),
   WaiSession,
+  get,
   options,
   request,
   shouldRespondWith,
@@ -91,16 +93,18 @@ normalizeXml xmlRequest =
        )
 
 
-davHeaders =
-  [ "Dav" <:> "1, 2, ordered-collections"
-  , "Content-Type" <:> "application/xml"
-  ]
+davHeader :: MatchHeader
+davHeader = "Dav" <:> "1, 2, ordered-collections"
+
+
+xmlHeader :: MatchHeader
+xmlHeader = "Content-Type" <:> "application/xml"
 
 
 spec :: Spec
-spec = with (pure webDavServer) $ do
-  describe "options" $ do
-    it "returns 200 for options requests" $ do
+spec = with (pure $ webDavServer "test/data.sqlite") $ do
+  describe "OPTIONS" $ do
+    it "returns 200 for OPTIONS requests" $ do
       options "/" `shouldRespondWith` 200
   describe "doPropFind" $ do
     it "returns a list of PropResults" $ do
@@ -151,7 +155,7 @@ spec = with (pure webDavServer) $ do
       result
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
-          , matchHeaders = davHeaders
+          , matchHeaders = [davHeader, xmlHeader]
           , matchBody = fromString (T.unpack xmlResponse)
           }
 
@@ -202,7 +206,7 @@ spec = with (pure webDavServer) $ do
       result
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
-          , matchHeaders = davHeaders
+          , matchHeaders = [davHeader, xmlHeader]
           , matchBody = fromString (T.unpack xmlResponse)
           }
 
@@ -309,7 +313,7 @@ spec = with (pure webDavServer) $ do
       result
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
-          , matchHeaders = davHeaders
+          , matchHeaders = [davHeader, xmlHeader]
           , matchBody = fromString (T.unpack xmlResponse)
           }
 
@@ -382,6 +386,19 @@ spec = with (pure webDavServer) $ do
             \      </prop>\
             \    </propstat>\
             \  </response>\
+            \  <response>\
+            \    <href>/users/1/photo</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <getlastmodified>\
+            \          Fri, 13 Oct 2020 18:35:34 GMT\
+            \        </getlastmodified>\
+            \        <getcontentlength>1000</getcontentlength>\
+            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
             \</multistatus>\
             \"
         result = propfind "/users/1" 1 (fromString (T.unpack xmlRequest))
@@ -389,8 +406,17 @@ spec = with (pure webDavServer) $ do
       result
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
-          , matchHeaders = davHeaders
+          , matchHeaders = [davHeader, xmlHeader]
           , matchBody = fromString (T.unpack xmlResponse)
+          }
+
+  describe "GET" $ do
+    it "returns the content of a cell" $ do
+      get "/users/1/name"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "John"
           }
 
 
