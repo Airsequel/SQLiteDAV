@@ -1,10 +1,11 @@
 module SQLiteDAV.Utils where
 
-import Protolude (Text, show, ($))
+import Protolude (Maybe (Just), Text, show, ($), (&))
 
-import Data.Text qualified as T
-import Database.SQLite.Simple (SQLData (..))
 import Data.ByteString.Lazy.Char8 qualified as Lazy.Char8
+import Data.Text qualified as T
+import Data.Time (FormatTime, defaultTimeLocale, formatTime)
+import Database.SQLite.Simple (SQLData (..))
 
 
 sqlDataToText :: SQLData -> Text
@@ -17,7 +18,6 @@ sqlDataToText sqlData =
     SQLNull -> "NULL"
 
 
-
 sqlDataToFileContent :: SQLData -> Lazy.Char8.ByteString
 sqlDataToFileContent sqlData =
   case sqlData of
@@ -26,3 +26,10 @@ sqlDataToFileContent sqlData =
     SQLFloat float -> show float
     SQLBlob blob -> Lazy.Char8.fromStrict blob
     SQLNull -> "NULL"
+
+
+formatTimestamp :: (FormatTime t) => t -> Text
+formatTimestamp timestamp =
+  timestamp
+    & formatTime defaultTimeLocale "%a, %e %b %Y %H:%M:%S %Z"
+    & T.pack

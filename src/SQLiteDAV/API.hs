@@ -3,20 +3,12 @@
 
 module SQLiteDAV.API where
 
-import Protolude (Char)
+import Protolude (Char, Maybe (..), Show, (<>))
 
 import Data.ByteString (ByteString)
+import Data.ByteString.Lazy qualified as BL
 import Data.Text (Text)
 import Database.SQLite.Simple (SQLData)
-import SQLiteDAV.HTTPExtensions (
-  AppXML,
-  Copy,
-  Mkcol,
-  Move,
-  Propfind,
-  TextXML,
- )
-import SQLiteDAV.Properties (PropResults)
 import Servant (
   CaptureAll,
   Delete,
@@ -34,7 +26,19 @@ import Servant (
   type (:<|>),
   type (:>),
  )
+import Servant.API.ContentTypes (AllCTRender, AllMime, handleAcceptH)
 import Text.XML.Light (Element)
+
+import SQLiteDAV.HTTPExtensions (
+  AppXML,
+  Copy,
+  Mkcol,
+  Move,
+  Propfind,
+  TextXML,
+ )
+import SQLiteDAV.Properties (PropResults)
+import SQLiteDAV.Utils (sqlDataToFileContent)
 
 
 type String = [Char]
@@ -43,29 +47,46 @@ type String = [Char]
 type Options = Verb 'OPTIONS 200
 
 
+data WithContentType = WithContentType
+  { header :: BL.ByteString
+  , content :: SQLData
+  }
+  deriving (Show)
+
+
+instance AllCTRender '[OctetStream] WithContentType where
+  handleAcceptH _ _ (WithContentType header content) =
+    Just (header, sqlDataToFileContent content)
+
+
+instance AllCTRender '[] NoContent where
+  handleAcceptH _ _ _ = Nothing
+
+
 -- TODO: Figure out why JSON is necessary for every endpoint and remove it
 type WebDavAPI =
   CaptureAll "segments" String
-    :> Mkcol '[JSON] ()
+    :> Mkcol '[] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Depth" Text
-      :> ReqBody '[AppXML, TextXML, JSON] Element
-      :> Propfind '[AppXML, TextXML, JSON] [PropResults]
+      :> ReqBody '[AppXML, TextXML] Element
+      :> Propfind '[AppXML, TextXML] [PropResults]
     :<|> CaptureAll "segments" String
-      :> Get '[PlainText, JSON] SQLData
+      :> Get '[OctetStream] WithContentType
     :<|> CaptureAll "segments" String
-      :> ReqBody '[OctetStream, JSON] ByteString
-      :> Put '[JSON] ()
+      :> ReqBody '[OctetStream] ByteString
+      :> Put '[] NoContent
     :<|> CaptureAll "segments" String
-      :> Delete '[JSON] ()
-    :<|> CaptureAll "segments" String
-      :> Header "Destination" String
-      :> Move '[JSON] ()
+      :> Delete '[] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Destination" String
-      :> Copy '[JSON] ()
+      :> Move '[] NoContent
     :<|> CaptureAll "segments" String
-      :> Options '[JSON] NoContent
+      :> Header "Destination" String
+      :> Copy '[] NoContent
+    :<|> CaptureAll "segments" String
+      -- `PlainText` is necessary to not return 406 errors
+      :> Options '[PlainText] NoContent
 
 
 --  :<|> Proppatch '[JSON] [Int]

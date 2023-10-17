@@ -58,6 +58,6 @@ instance ParseRecord Options where
 main :: IO ()
 main = do
   (options :: Options) <- getRecord "SQLiteDAV server"
-  let thePort = options.port & fromMaybe 3543
+  let thePort = options.port & fromMaybe 1234
   putText $ "Starting server on http://localhost:" <> show thePort
   run thePort $ logStdoutDev $ webDavServer (T.unpack options.dbPath)

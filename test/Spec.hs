@@ -4,15 +4,19 @@
 module Spec where
 
 import Protolude (
+  Char,
   IO,
   Integer,
   Maybe (..),
   Text,
+  decodeUtf8,
   fmap,
   isSpace,
+  liftIO,
   not,
   pure,
   show,
+  traceShowId,
   ($),
   (&),
   (.),
@@ -20,13 +24,16 @@ import Protolude (
   (<>),
   (==),
  )
+import Protolude.Unsafe (unsafeIndex)
 
+import Data.ByteString.Lazy qualified as BL
 import Data.String (fromString)
 import Data.Text qualified as T
+import Data.Time (getCurrentTime)
 import Debug.Trace (traceM)
 import Network.HTTP.Types (hContentType)
 import Network.Wai ()
-import Network.Wai.Test (SResponse (..))
+import Network.Wai.Test (SResponse (..), simpleBody)
 import Test.Hspec (Spec, describe, fit, hspec, it)
 import Test.Hspec.Wai (
   MatchHeader,
@@ -44,11 +51,16 @@ import Test.Hspec.Wai (
   with,
   (<:>),
  )
+import Text.Regex.TDFA
 
 import SQLiteDAV.API ()
 import SQLiteDAV.HTTPExtensions ()
 import SQLiteDAV.Properties ()
 import SQLiteDAV.Server (webDavServer)
+import SQLiteDAV.Utils (formatTimestamp)
+
+
+type String = [Char]
 
 
 {-| Perform an `PROPFIND` request to the application under test.
@@ -101,12 +113,39 @@ xmlHeader :: MatchHeader
 xmlHeader = "Content-Type" <:> "application/xml"
 
 
+rmModified :: WaiSession st SResponse -> WaiSession st SResponse
+rmModified fRes =
+  let
+    regex :: BL.ByteString = "<D:getlastmodified>([^<>]+)</D:getlastmodified>"
+  in
+    fRes
+      <&> ( \sres ->
+              let
+                bodyTxt :: Text =
+                  sres
+                    & simpleBody
+                    & BL.toStrict
+                    & decodeUtf8
+                timestampMatch :: Text =
+                  bodyTxt =~ regex
+                simpleBodyNew =
+                  bodyTxt
+                    & T.replace
+                      timestampMatch
+                      "<D:getlastmodified>REMOVED</D:getlastmodified>"
+                    & T.unpack
+                    & fromString
+              in
+                sres{simpleBody = simpleBodyNew}
+          )
+
+
 spec :: Spec
 spec = with (pure $ webDavServer "test/data.sqlite") $ do
   describe "OPTIONS" $ do
     it "returns 200 for OPTIONS requests" $ do
       options "/" `shouldRespondWith` 200
-  describe "doPropFind" $ do
+  describe "PROPFIND" $ do
     it "returns a list of PropResults" $ do
       let
         xmlRequest =
@@ -131,16 +170,14 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \        <resourcetype>\
             \          <collection />\
             \        </resourcetype>\
-            \        <getlastmodified>\
-            \          Fri, 13 Oct 2020 18:35:34 GMT\
-            \        </getlastmodified>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
             \      </prop>\
             \    </propstat>\
             \    <propstat>\
             \      <status>HTTP/1.1 404 Not Found</status>\
             \      <prop>\
             \        <getcontentlength />\
+            \        <creationdate />\
             \      </prop>\
             \      <responsedescription>\
             \        Property was not found\
@@ -152,7 +189,7 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
 
         result = propfind "/" 0 (fromString (T.unpack xmlRequest))
 
-      result
+      rmModified result
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
           , matchHeaders = [davHeader, xmlHeader]
@@ -183,16 +220,14 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \        <resourcetype>\
             \          <collection />\
             \        </resourcetype>\
-            \        <getlastmodified>\
-            \          Fri, 13 Oct 2020 18:35:34 GMT\
-            \        </getlastmodified>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
             \      </prop>\
             \    </propstat>\
             \    <propstat>\
             \      <status>HTTP/1.1 404 Not Found</status>\
             \      <prop>\
             \        <getcontentlength />\
+            \        <creationdate />\
             \      </prop>\
             \      <responsedescription>\
             \        Property was not found\
@@ -203,7 +238,7 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \"
         result = propfind "/users" 0 (fromString (T.unpack xmlRequest))
 
-      result
+      rmModified result
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
           , matchHeaders = [davHeader, xmlHeader]
@@ -234,16 +269,18 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \        <resourcetype>\
             \          <collection />\
             \        </resourcetype>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
             \      </prop>\
             \    </propstat>\
             \    <propstat>\
             \      <status>HTTP/1.1 404 Not Found</status>\
             \      <prop>\
             \        <getcontentlength />\
+            \        <creationdate />\
             \      </prop>\
-            \      <responsedescription>Property was not found</responsedescription>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \  <response>\
@@ -254,16 +291,18 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \        <resourcetype>\
             \          <collection />\
             \        </resourcetype>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
             \      </prop>\
             \    </propstat>\
             \    <propstat>\
             \      <status>HTTP/1.1 404 Not Found</status>\
             \      <prop>\
             \        <getcontentlength />\
+            \        <creationdate />\
             \      </prop>\
-            \      <responsedescription>Property was not found</responsedescription>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \  <response>\
@@ -274,16 +313,18 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \        <resourcetype>\
             \          <collection />\
             \        </resourcetype>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
             \      </prop>\
             \    </propstat>\
             \    <propstat>\
             \      <status>HTTP/1.1 404 Not Found</status>\
             \      <prop>\
             \        <getcontentlength />\
+            \        <creationdate />\
             \      </prop>\
-            \      <responsedescription>Property was not found</responsedescription>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \  <response>\
@@ -294,23 +335,25 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \        <resourcetype>\
             \          <collection />\
             \        </resourcetype>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
             \      </prop>\
             \    </propstat>\
             \    <propstat>\
             \      <status>HTTP/1.1 404 Not Found</status>\
             \      <prop>\
             \        <getcontentlength />\
+            \        <creationdate />\
             \      </prop>\
-            \      <responsedescription>Property was not found</responsedescription>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \</multistatus>\
             \"
         result = propfind "/users/" 1 (fromString (T.unpack xmlRequest))
 
-      result
+      rmModified result
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
           , matchHeaders = [davHeader, xmlHeader]
@@ -341,49 +384,75 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \        <resourcetype>\
             \          <collection />\
             \        </resourcetype>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
             \      </prop>\
             \    </propstat>\
             \    <propstat>\
             \      <status>HTTP/1.1 404 Not Found</status>\
             \      <prop>\
             \        <getcontentlength />\
+            \        <creationdate />\
             \      </prop>\
-            \      <responsedescription>Property was not found</responsedescription>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \  <response>\
-            \    <href>/users/1/name</href>\
+            \    <href>/users/1/name.txt</href>\
             \    <propstat>\
             \      <status>HTTP/1.1 200 OK</status>\
             \      <prop>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <getcontentlength>1000</getcontentlength>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \        <getcontentlength>4</getcontentlength>\
             \      </prop>\
+            \    </propstat>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 404 Not Found</status>\
+            \      <prop>\
+            \        <creationdate />\
+            \      </prop>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \  <response>\
-            \    <href>/users/1/email</href>\
+            \    <href>/users/1/email.txt</href>\
             \    <propstat>\
             \      <status>HTTP/1.1 200 OK</status>\
             \      <prop>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <getcontentlength>1000</getcontentlength>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \        <getcontentlength>16</getcontentlength>\
             \      </prop>\
+            \    </propstat>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 404 Not Found</status>\
+            \      <prop>\
+            \        <creationdate />\
+            \      </prop>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \  <response>\
-            \    <href>/users/1/height</href>\
+            \    <href>/users/1/height.txt</href>\
             \    <propstat>\
             \      <status>HTTP/1.1 200 OK</status>\
             \      <prop>\
-            \        <getlastmodified>Fri, 13 Oct 2020 18:35:34 GMT</getlastmodified>\
-            \        <getcontentlength>1000</getcontentlength>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \        <getcontentlength>3</getcontentlength>\
             \      </prop>\
+            \    </propstat>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 404 Not Found</status>\
+            \      <prop>\
+            \        <creationdate />\
+            \      </prop>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \  <response>\
@@ -391,19 +460,33 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
             \    <propstat>\
             \      <status>HTTP/1.1 200 OK</status>\
             \      <prop>\
-            \        <getlastmodified>\
-            \          Fri, 13 Oct 2020 18:35:34 GMT\
-            \        </getlastmodified>\
-            \        <getcontentlength>1000</getcontentlength>\
-            \        <creationdate>2021-01-01T00:00:00Z</creationdate>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \        <getcontentlength>135872</getcontentlength>\
             \      </prop>\
+            \    </propstat>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 404 Not Found</status>\
+            \      <prop>\
+            \        <creationdate />\
+            \      </prop>\
+            \      <responsedescription>\
+            \        Property was not found\
+            \      </responsedescription>\
             \    </propstat>\
             \  </response>\
             \</multistatus>\
             \"
-        result = propfind "/users/1" 1 (fromString (T.unpack xmlRequest))
 
-      result
+      let result = propfind "/users/1" 1 (fromString (T.unpack xmlRequest))
+      rmModified result
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 207
+          , matchHeaders = [davHeader, xmlHeader]
+          , matchBody = fromString (T.unpack xmlResponse)
+          }
+
+      let resSlash = propfind "/users/1/" 1 (fromString (T.unpack xmlRequest))
+      rmModified resSlash
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
           , matchHeaders = [davHeader, xmlHeader]

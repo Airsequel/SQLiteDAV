@@ -26,8 +26,8 @@ library
       SQLiteDAV.HTTPExtensions
       SQLiteDAV.Properties
       SQLiteDAV.Server
-  other-modules:
       SQLiteDAV.Utils
+  other-modules:
       Paths_SQLiteDAV
   hs-source-dirs:
       src
@@ -40,9 +40,12 @@ library
     , base >=4.7 && <5
     , bytestring
     , directory
+    , exceptions
     , filepath
     , http-types
     , protolude
+    , regex-tdfa
+    , servant
     , servant-foreign
     , servant-options
     , servant-server
@@ -71,10 +74,13 @@ executable sqlitedav
     , base >=4.7 && <5
     , bytestring
     , directory
+    , exceptions
     , filepath
     , http-types
     , optparse-generic
     , protolude
+    , regex-tdfa
+    , servant
     , servant-foreign
     , servant-options
     , servant-server
@@ -105,11 +111,14 @@ test-suite sqlitedav-test
     , base >=4.7 && <5
     , bytestring
     , directory
+    , exceptions
     , filepath
     , hspec
     , hspec-wai
     , http-types
     , protolude
+    , regex-tdfa
+    , servant
     , servant-foreign
     , servant-options
     , servant-server

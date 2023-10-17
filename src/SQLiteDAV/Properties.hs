@@ -40,7 +40,7 @@ import Data.Traversable (for)
 import Database.SQLite.Simple (SQLData)
 import GHC.Generics (Generic)
 import Protolude.Error (error)
-import Servant (MimeRender (..), PlainText)
+import Servant (MimeRender (..), MimeUnrender (..), OctetStream, PlainText)
 import System.Directory (
   doesDirectoryExist,
   doesFileExist,
@@ -141,8 +141,8 @@ instance MimeRender PlainText SQLData where
   mimeRender _ = sqlDataToFileContent
 
 
-instance ToJSON SQLData where
-  toJSON = error "ToJSON SQLData should not be necessary"
+instance MimeRender OctetStream SQLData where
+  mimeRender _ = sqlDataToFileContent
 
 
 propResultsToXml :: PropResults -> Element
@@ -180,32 +180,3 @@ propResultsToXml PropResults{..} = do
               else []
            )
     )
-
-
-getProp :: FilePath -> FilePath -> Text -> IO (Maybe Text)
-getProp dbPath filePath prop = case prop of
-  "getlastmodified" -> do
-    lastModified <- getModificationTime $ dbPath ++ filePath
-    pure
-      $ Just
-      $ T.pack
-      $ formatTime
-        defaultTimeLocale
-        "%a, %e %b %Y %H:%M:%S %Z"
-        lastModified
-  "creationdate" -> pure Nothing -- Unix doesn't seem to store creation date
-  "displayname" -> pure $ Just $ T.pack $ takeFileName filePath
-  "getcontentlength" -> do
-    stat <- getFileStatus $ dbPath ++ filePath
-    pure $ Just $ show $ fileSize stat
-  "getcontenttype" -> do
-    case takeExtension filePath of
-      ".txt" -> pure $ Just "text/plain"
-      _ -> pure Nothing
-  "resourcetype" -> pure Nothing -- this is handled elsewhere
-  _ -> do
-    putStrLn
-      $ "Warning: Server requested a property \
-        \that we do not handle: "
-      ++ T.unpack prop
-    pure Nothing

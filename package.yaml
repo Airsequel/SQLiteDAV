@@ -13,9 +13,12 @@ dependencies:
   - base >= 4.7 && < 5
   - bytestring
   - directory
+  - exceptions
   - filepath
   - http-types
   - protolude
+  - regex-tdfa
+  - servant
   - servant-foreign
   - servant-options
   - servant-server
@@ -38,6 +41,7 @@ library:
     - SQLiteDAV.HTTPExtensions
     - SQLiteDAV.Properties
     - SQLiteDAV.Server
+    - SQLiteDAV.Utils
   language: GHC2021
 
 executables:
