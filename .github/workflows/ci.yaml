@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - .github/workflows/ci.yaml
-      - **/*
+      - ./**/*
 
 jobs:
   build-sqlitedav:
