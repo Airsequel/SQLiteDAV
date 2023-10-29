@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - .github/workflows/ci.yaml
+      - **/*
+
+jobs:
+  build-sqlitedav:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 10  # Necessary for git describe --tags
+
+      - name: Fetch tags
+        # Necessary according to
+        # https://github.com/actions/checkout/issues/290
+        run: |
+          git fetch --tags --force
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -y && \
+          sudo apt-get install -y libmagic-dev
+
+      - name: Setup Stack
+        uses: haskell/actions/setup@v1
+        with:
+          enable-stack: true
+          stack-no-global: true
+
+      - name: Cache Stack build files
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.stack
+            .stack-work
+          key: >-
+            ${{ runner.os }}-stack-${{
+            hashFiles('stack.yaml.lock', 'package.yaml') }}
+          restore-keys: |
+            ${{runner.os}}-stack
+
+      - name: Test
+        run: |
+          stack test --ghc-options="-O2"
+
+      - name: Install
+        run: |
+          stack install --ghc-options="-O2"
+
+      - name: Upload Linux Release
+        uses: actions/upload-artifact@v2
+        with:
+          path: ~/.local/bin/sqlitedav
+          name: sqlitedav_x86_64
