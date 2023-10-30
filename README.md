@@ -10,6 +10,22 @@ File View | ![Screenshot of macOS Finder](./images/2023-10-17t2031_finder.png)
 
 ## Installation
 
+### From Binaries
+
+1. Go to https://github.com/Airsequel/SQLiteDAV/releases
+1. Download the latest release for your platform
+1. Unzip the archive:
+    ```sh
+    unzip sqlitedav_*.zip
+    ```
+1. Make the binary executable:
+    ```sh
+    chmod +x sqlitedav
+    ```
+
+
+### From Source
+
 Prerequisite:
 [Install Stack](https://docs.haskellstack.org/en/stable/#how-to-install-stack)
 
