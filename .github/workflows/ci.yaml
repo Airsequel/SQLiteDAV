@@ -8,7 +8,10 @@ on:
 
 jobs:
   build-sqlitedav:
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, macos-12]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -56,4 +59,4 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           path: ~/.local/bin/sqlitedav
-          name: sqlitedav_linux_x86_64
+          name: sqlitedav_${{ matrix.os }}_x86_64
