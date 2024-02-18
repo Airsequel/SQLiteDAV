@@ -51,3 +51,12 @@ stack install
 The next features are implemented based on popular demand.
 So please upvote any [issues](https://github.com/Airsequel/SQLiteDAV/issues)
 you would like to see implemented!
+
+## Related
+
+- [github.com/adamobeng/wddbfs][wddbfs] - [webdavfs] provider that can read sqlite databases.
+- [sqlite.org/cloudsqlite][cloudsqlite] - Cloud backed SQLite system.
+
+[cloudsqlite]: https://sqlite.org/cloudsqlite/doc/trunk/www/index.wiki
+[wddbfs]: https://github.com/adamobeng/wddbfs
+[webdavfs]: https://github.com/miquels/webdavfs
