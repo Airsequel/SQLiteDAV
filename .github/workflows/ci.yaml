@@ -10,7 +10,7 @@ jobs:
   build-sqlitedav:
     strategy:
       matrix:
-        os: [ubuntu-22.04, macos-12]
+        os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
