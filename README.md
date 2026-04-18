@@ -55,11 +55,15 @@ you would like to see implemented!
 
 ## Related
 
-- [github.com/adamobeng/wddbfs][wddbfs] - [webdavfs] provider that can read sqlite databases.
-- [sqlite.org/cloudsqlite][cloudsqlite] - Cloud backed SQLite system.
+- [Litmus] - WebDAV server protocol compliance test suite.
+- [Many Hells of WebDAV] - Article about the discrepancies in WebDAV implementations.
 - [sqlite-fs] - Mount a SQLite database as a normal filesystem on Linux and macOS.
+- [sqlite.org/cloudsqlite][cloudsqlite] - Cloud backed SQLite system.
+- [wddbfs] - [webdavfs] provider that can read sqlite databases.
 
-[sqlite-fs]: https://github.com/narumatt/sqlitefs
 [cloudsqlite]: https://sqlite.org/cloudsqlite/doc/trunk/www/index.wiki
+[Litmus]: https://github.com/notroj/litmus
+[Many Hells of WebDAV]: https://candid.dev/blog/many-hells-of-webdav
+[sqlite-fs]: https://github.com/narumatt/sqlitefs
 [wddbfs]: https://github.com/adamobeng/wddbfs
 [webdavfs]: https://github.com/miquels/webdavfs
