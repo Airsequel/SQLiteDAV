@@ -1,7 +1,9 @@
 resolver: lts-24.27
+
+system-ghc: true
+
 packages:
-  - '.'
+  - .
 
 extra-deps:
-#   - datetime-0.3.1
   - servant-options-0.1.0.0
