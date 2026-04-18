@@ -127,8 +127,8 @@ server dbPath =
 
 webDavServer :: FilePath -> Application
 webDavServer dbPath =
-  addHeaders [("Dav", "1, 2, ordered-collections")]
-    $ serve webDavAPI (server dbPath)
+  addHeaders [("Dav", "1, 2, ordered-collections")] $
+    serve webDavAPI (server dbPath)
 
 
 doOptions :: [String] -> Handler NoContent
@@ -186,20 +186,20 @@ doGet dbPath urlPath = do
             let
               colName = dropExtension colNameWithExt
               sqlQuery =
-                Query
-                  $ "SELECT "
-                  <> quoteKeyword (T.pack colName)
-                  <> " FROM "
-                  <> quoteKeyword (T.pack tableName)
-                  <> " WHERE rowid == ?"
+                Query $
+                  "SELECT "
+                    <> quoteKeyword (T.pack colName)
+                    <> " FROM "
+                    <> quoteKeyword (T.pack tableName)
+                    <> " WHERE rowid == ?"
             query conn sqlQuery (Only rowid)
 
           case colResult :: [Only SQLData] of
             [] ->
               throwError err404{errBody = "Row not found"}
             [Only colData] ->
-              pure
-                $ WithContentType
+              pure $
+                WithContentType
                   { header = dataToContentType colData
                   , content = colData
                   }
@@ -224,12 +224,12 @@ getCellSize dbPath urlPath = do
             let
               colName = dropExtension colNameWithExt
               sqlQuery =
-                Query
-                  $ "SELECT length("
-                  <> quoteKeyword (T.pack colName)
-                  <> ") FROM "
-                  <> quoteKeyword (T.pack tableName)
-                  <> " WHERE rowid == ?"
+                Query $
+                  "SELECT length("
+                    <> quoteKeyword (T.pack colName)
+                    <> ") FROM "
+                    <> quoteKeyword (T.pack tableName)
+                    <> " WHERE rowid == ?"
             query conn sqlQuery (Only rowid)
 
           case colResult :: [Only SQLData] of
@@ -262,12 +262,12 @@ doMkCol urlPath = do
   pure NoContent
 
 
-propNameToEntry
-  :: FilePath
-  -> [String]
-  -> ItemType
-  -> String
-  -> Handler (Maybe (String, String))
+propNameToEntry ::
+  FilePath ->
+  [String] ->
+  ItemType ->
+  String ->
+  Handler (Maybe (String, String))
 propNameToEntry dbPath urlPath itemType propName = do
   let urlPathStr = "/" ++ intercalate "/" urlPath
 
@@ -296,8 +296,8 @@ keepMissingNames itemType propNames =
         , "quotaused"
         ]
           ++ ( case itemType of
-                File -> []
-                Folder -> ["getcontentlength"]
+                 File -> []
+                 Folder -> ["getcontentlength"]
              )
   in  propNames & filter (`elem` disallowed)
 
@@ -326,10 +326,10 @@ getRowColumns dbPath tableName rowid =
   catchAll
     ( withConnection dbPath $ \conn -> do
         let sqlQuery =
-              Query
-                $ "SELECT * FROM "
-                <> quoteKeyword tableName
-                <> " WHERE rowid = ?"
+              Query $
+                "SELECT * FROM "
+                  <> quoteKeyword tableName
+                  <> " WHERE rowid = ?"
 
         columns <- withStatement conn sqlQuery $ \stmt -> do
           numCols <- columnCount stmt
@@ -358,13 +358,13 @@ ignoreHiddenFiles resourceName =
     $ throwError err404
 
 
-getPropsForTable
-  :: FilePath
-  -> [String]
-  -> Maybe Text
-  -> [String]
-  -> String
-  -> Handler [PropResults]
+getPropsForTable ::
+  FilePath ->
+  [String] ->
+  Maybe Text ->
+  [String] ->
+  String ->
+  Handler [PropResults]
 getPropsForTable dbPath urlPath depth propNames tableName = do
   props <-
     propNames
@@ -390,11 +390,11 @@ getPropsForTable dbPath urlPath depth propNames tableName = do
       tableName
         ++ "/"
         ++ ( tableRow
-              & headMay
-              & fromMaybe ("ERROR", SQLText "ERROR")
-              & snd
-              & sqlDataToText
-              & T.unpack
+               & headMay
+               & fromMaybe ("ERROR", SQLText "ERROR")
+               & snd
+               & sqlDataToText
+               & T.unpack
            )
     ioTableRows =
       tableRows
@@ -407,21 +407,21 @@ getPropsForTable dbPath urlPath depth propNames tableName = do
                   }
             )
 
-  pure
-    $ rootPropResult
-    : if depthLow /= Just "1" && depthLow /= Just "infinity"
-      then []
-      else ioTableRows
+  pure $
+    rootPropResult
+      : if depthLow /= Just "1" && depthLow /= Just "infinity"
+        then []
+        else ioTableRows
 
 
-getPropsForRow
-  :: FilePath
-  -> [String]
-  -> Maybe Text
-  -> [String]
-  -> String
-  -> Maybe Integer
-  -> Handler [PropResults]
+getPropsForRow ::
+  FilePath ->
+  [String] ->
+  Maybe Text ->
+  [String] ->
+  String ->
+  Maybe Integer ->
+  Handler [PropResults]
 getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
   rootProps <-
     propNames
@@ -444,8 +444,8 @@ getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
 
   rowColumns <- liftIO $ getRowColumns dbPath (T.pack tableName) rowid
 
-  when (null rowColumns)
-    $ throwError
+  when (null rowColumns) $
+    throwError
       err404{errBody = "Row does not exist or does not have any columns"}
 
   propResults <-
@@ -466,8 +466,8 @@ getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
               & mapM (propNameToEntry dbPath (urlPath ++ [colName]) File)
               <&> catMaybes
 
-          pure
-            $ PropResults
+          pure $
+            PropResults
               { propName = getPropName tableName
               , itemType = File
               , props
@@ -476,21 +476,21 @@ getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
       )
       rowColumns
 
-  pure
-    $ rootPropResult
-    : if depthLow /= Just "1" && depthLow /= Just "infinity"
-      then []
-      else propResults
+  pure $
+    rootPropResult
+      : if depthLow /= Just "1" && depthLow /= Just "infinity"
+        then []
+        else propResults
 
 
-getPropsForCell
-  :: FilePath
-  -> [String]
-  -> [String]
-  -> String
-  -> Maybe Integer
-  -> String
-  -> Handler [PropResults]
+getPropsForCell ::
+  FilePath ->
+  [String] ->
+  [String] ->
+  String ->
+  Maybe Integer ->
+  String ->
+  Handler [PropResults]
 getPropsForCell dbPath urlPath propNames tableName rowidMb colNameWithExt = do
   props <-
     propNames
@@ -516,12 +516,12 @@ getPropsForCell dbPath urlPath propNames tableName rowidMb colNameWithExt = do
   pure [rootPropResult]
 
 
-doPropFind
-  :: String
-  -> [String]
-  -> Maybe Text
-  -> Element
-  -> Handler [PropResults]
+doPropFind ::
+  String ->
+  [String] ->
+  Maybe Text ->
+  Element ->
+  Handler [PropResults]
 doPropFind dbPath urlPath depth doc = do
   let
     urlPathNorm = urlPath & filter (/= "")
@@ -558,20 +558,20 @@ doPropFind dbPath urlPath depth doc = do
           & mapM (propNameToEntry dbPath urlPathNorm Folder)
           <&> catMaybes
 
-      pure
-        $ rootPropResult
-        : if depthLow /= Just "1" && depthLow /= Just "infinity"
-          then []
-          else
-            tableRows
-              & concat
-              <&> \table ->
-                PropResults
-                  { propName = T.unpack table
-                  , itemType = Folder
-                  , props = folderProps
-                  , propMissing = propNames & keepMissingNames Folder
-                  }
+      pure $
+        rootPropResult
+          : if depthLow /= Just "1" && depthLow /= Just "infinity"
+            then []
+            else
+              tableRows
+                & concat
+                <&> \table ->
+                  PropResults
+                    { propName = T.unpack table
+                    , itemType = Folder
+                    , props = folderProps
+                    , propMissing = propNames & keepMissingNames Folder
+                    }
     --
     [tableName] ->
       getPropsForTable dbPath urlPathNorm depth propNames tableName

@@ -126,7 +126,7 @@ xmlMimeRender items =
       "multistatus"
       [Attr (unqual "xmlns:D") "DAV:"]
     $ items
-    <&> propResultsToXml
+      <&> propResultsToXml
 
 
 instance MimeRender AppXML [PropResults] where
@@ -168,15 +168,15 @@ propResultsToXml PropResults{..} = do
           ]
       ]
         ++ ( if not (null propMissing)
-              then
-                [ e
-                    "propstat"
-                    []
-                    [ te "status" [] "HTTP/1.1 404 Not Found"
-                    , e "prop" [] $ fmap (\x -> e x [] []) propMissing
-                    , te "responsedescription" [] "Property was not found"
-                    ]
-                ]
-              else []
+               then
+                 [ e
+                     "propstat"
+                     []
+                     [ te "status" [] "HTTP/1.1 404 Not Found"
+                     , e "prop" [] $ fmap (\x -> e x [] []) propMissing
+                     , te "responsedescription" [] "Property was not found"
+                     ]
+                 ]
+               else []
            )
     )
