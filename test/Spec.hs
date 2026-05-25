@@ -32,6 +32,7 @@ import Data.Text qualified as T
 import Data.Time (getCurrentTime)
 import Debug.Trace (traceM)
 import Network.HTTP.Types (hContentType)
+import System.Directory (copyFile)
 import Network.Wai ()
 import Network.Wai.Test (SResponse (..), simpleBody)
 import Test.Hspec (Spec, describe, fit, hspec, it)
@@ -44,6 +45,7 @@ import Test.Hspec.Wai (
     matchStatus
   ),
   WaiSession,
+  delete,
   get,
   options,
   request,
@@ -140,8 +142,17 @@ rmModified fRes =
           )
 
 
+-- | Copy the test fixture database to a scratch path so tests can mutate it
+-- without polluting the committed file.
+mkTestApp :: IO _
+mkTestApp = do
+  let scratchDb = "test/data_scratch.sqlite"
+  copyFile "test/data.sqlite" scratchDb
+  pure $ webDavServer scratchDb
+
+
 spec :: Spec
-spec = with (pure $ webDavServer "test/data.sqlite") $ do
+spec = with mkTestApp $ do
   describe "OPTIONS" $ do
     it "returns 200 for OPTIONS requests" $ do
       options "/" `shouldRespondWith` 200
@@ -500,6 +511,17 @@ spec = with (pure $ webDavServer "test/data.sqlite") $ do
           { matchStatus = 200
           , matchHeaders = [davHeader]
           , matchBody = "John"
+          }
+
+  describe "DELETE" $ do
+    it "sets a cell to NULL" $ do
+      delete "/users/2/email"
+        `shouldRespondWith` 204
+      get "/users/2/email"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "NULL"
           }
 
 

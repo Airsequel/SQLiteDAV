@@ -11,7 +11,6 @@ import Data.Text (Text)
 import Database.SQLite.Simple (SQLData)
 import Servant (
   CaptureAll,
-  Delete,
   Get,
   Header,
   JSON,
@@ -21,7 +20,7 @@ import Servant (
   Proxy (..),
   Put,
   ReqBody,
-  StdMethod (OPTIONS),
+  StdMethod (DELETE, OPTIONS),
   Verb,
   type (:<|>),
   type (:>),
@@ -45,6 +44,9 @@ type String = [Char]
 
 
 type Options = Verb 'OPTIONS 200
+
+
+type Delete = Verb 'DELETE 204
 
 
 data WithContentType = WithContentType
@@ -77,7 +79,8 @@ type WebDavAPI =
       :> ReqBody '[OctetStream] ByteString
       :> Put '[] NoContent
     :<|> CaptureAll "segments" String
-      :> Delete '[] NoContent
+      -- `PlainText` is necessary to not return 406 errors
+      :> Delete '[PlainText] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Destination" String
       :> Move '[] NoContent

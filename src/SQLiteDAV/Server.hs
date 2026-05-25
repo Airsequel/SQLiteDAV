@@ -63,6 +63,7 @@ import Database.SQLite.Simple (
   SQLData (..),
   columnCount,
   columnName,
+  execute,
   query,
   query_,
   withConnection,
@@ -119,7 +120,7 @@ server dbPath =
     :<|> doPropFind dbPath
     :<|> doGet dbPath
     :<|> doPut
-    :<|> doDelete
+    :<|> doDelete dbPath
     :<|> doMove
     :<|> doCopy
     :<|> doOptions
@@ -250,10 +251,28 @@ getCellSize dbPath urlPath = do
       pure 0
 
 
-doDelete :: [String] -> Handler NoContent
-doDelete urlPath = do
-  traceM $ show urlPath ++ " deleted"
-  pure NoContent
+doDelete :: FilePath -> [String] -> Handler NoContent
+doDelete dbPath urlPath = do
+  case urlPath & filter (/= "") of
+    tableName : rowidStr : colNameWithExt : _rest ->
+      case readMaybe rowidStr of
+        Nothing ->
+          throwError err400{errBody = "Invalid rowid"}
+        Just (rowid :: Integer) -> do
+          let
+            colName = dropExtension colNameWithExt
+            sqlQuery =
+              Query $
+                "UPDATE "
+                  <> quoteKeyword (T.pack tableName)
+                  <> " SET "
+                  <> quoteKeyword (T.pack colName)
+                  <> " = NULL WHERE rowid == ?"
+          liftIO $ withConnection dbPath $ \conn ->
+            execute conn sqlQuery (Only rowid)
+          pure NoContent
+    _ ->
+      throwError err404
 
 
 doMkCol :: [String] -> Handler NoContent

@@ -2,3 +2,4 @@
 .stack-work
 *~
 .direnv
+test/data_scratch.sqlite*
