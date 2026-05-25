@@ -57,6 +57,7 @@ import Data.List (isInfixOf, isPrefixOf)
 import Data.Maybe (Maybe (..), catMaybes, mapMaybe)
 import Data.Text (Text, toLower)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
 import Data.Time (FormatTime, defaultTimeLocale, formatTime)
 import Data.Traversable (for)
 import Database.SQLite.Simple (
@@ -108,6 +109,7 @@ import Text.XML.Light (
  )
 
 import SQLiteDAV.API (WebDavAPI, WithContentType (..), webDavAPI)
+import SQLiteDAV.MimeDetect (detectMimeType, extensionForMime)
 import SQLiteDAV.Properties (
   ItemType (File, Folder),
   LockResult (LockResult, lockRoot, lockToken),
@@ -185,24 +187,30 @@ doPut urlPath body = do
   pure NoContent
 
 
-dataToContentType :: SQLData -> BL.ByteString
+dataToContentType :: SQLData -> IO BL.ByteString
 dataToContentType sqlData =
   case sqlData of
-    SQLText _ -> "text/plain"
-    SQLInteger _ -> "text/plain"
-    SQLFloat _ -> "text/plain"
-    SQLBlob _ -> "image/png"
-    SQLNull -> "text/plain"
+    SQLText _ -> pure "text/plain"
+    SQLInteger _ -> pure "text/plain"
+    SQLFloat _ -> pure "text/plain"
+    SQLBlob blob -> do
+      mime <- detectMimeType blob
+      pure $ BL.fromStrict $ T.encodeUtf8 mime
+    SQLNull -> pure "text/plain"
 
 
-dataToFileExt :: SQLData -> String
+dataToFileExt :: SQLData -> IO String
 dataToFileExt sqlData =
   case sqlData of
-    SQLText _ -> ".txt"
-    SQLInteger _ -> ".txt"
-    SQLFloat _ -> ".txt"
-    SQLBlob _ -> ""
-    SQLNull -> ".txt"
+    SQLText _ -> pure ".txt"
+    SQLInteger _ -> pure ".txt"
+    SQLFloat _ -> pure ".txt"
+    SQLBlob blob -> do
+      mime <- detectMimeType blob
+      pure $ case extensionForMime mime of
+        Just ext -> "." <> T.unpack ext
+        Nothing -> ""
+    SQLNull -> pure ".txt"
 
 
 doGet :: FilePath -> [String] -> Handler WithContentType
@@ -228,10 +236,11 @@ doGet dbPath urlPath = do
           case colResult :: [Only SQLData] of
             [] ->
               throwError err404{errBody = "Row not found"}
-            [Only colData] ->
+            [Only colData] -> do
+              contentType <- liftIO $ dataToContentType colData
               pure $
                 WithContentType
-                  { header = dataToContentType colData
+                  { header = contentType
                   , content = colData
                   }
             _ ->
@@ -502,13 +511,15 @@ getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
       ( \rowColumn -> do
           let
             colName = T.unpack (fst rowColumn)
+          fileExt <- liftIO $ dataToFileExt (snd rowColumn)
+          let
             getPropName tableName =
               tableName
                 ++ "/"
                 ++ show rowid
                 ++ "/"
                 ++ colName
-                ++ dataToFileExt (snd rowColumn)
+                ++ fileExt
 
           props <-
             propNames

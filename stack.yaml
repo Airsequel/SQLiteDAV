@@ -7,3 +7,13 @@ packages:
 
 extra-deps:
   - servant-options-0.1.0.0
+
+extra-include-dirs:
+  - /opt/homebrew/include
+  - /usr/local/include
+  - /opt/homebrew/opt/libmagic/include
+
+extra-lib-dirs:
+  - /opt/homebrew/lib
+  - /usr/local/lib
+  - /opt/homebrew/opt/libmagic/lib

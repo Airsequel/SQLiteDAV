@@ -484,7 +484,7 @@ spec = with mkTestApp $ do
             \    </propstat>\
             \  </response>\
             \  <response>\
-            \    <href>/users/1/photo</href>\
+            \    <href>/users/1/photo.png</href>\
             \    <propstat>\
             \      <status>HTTP/1.1 200 OK</status>\
             \      <prop>\

@@ -30,6 +30,7 @@
             })
             haskellPackages.hlint
             haskellPackages.stack
+            file
             zlib
           ];
         };

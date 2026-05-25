@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.36.0.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
 
@@ -24,6 +24,7 @@ library
   exposed-modules:
       SQLiteDAV.API
       SQLiteDAV.HTTPExtensions
+      SQLiteDAV.MimeDetect
       SQLiteDAV.Properties
       SQLiteDAV.Server
       SQLiteDAV.Utils
@@ -39,10 +40,13 @@ library
       aeson
     , base >=4.7 && <5
     , bytestring
+    , containers
     , directory
     , exceptions
     , filepath
     , http-types
+    , magic
+    , mime-types
     , protolude
     , regex-tdfa
     , servant
@@ -73,10 +77,13 @@ executable sqlitedav
     , aeson
     , base >=4.7 && <5
     , bytestring
+    , containers
     , directory
     , exceptions
     , filepath
     , http-types
+    , magic
+    , mime-types
     , optparse-generic
     , protolude
     , regex-tdfa
@@ -110,12 +117,15 @@ test-suite sqlitedav-test
     , aeson
     , base >=4.7 && <5
     , bytestring
+    , containers
     , directory
     , exceptions
     , filepath
     , hspec
     , hspec-wai
     , http-types
+    , magic
+    , mime-types
     , protolude
     , regex-tdfa
     , servant

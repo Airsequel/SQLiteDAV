@@ -12,10 +12,13 @@ dependencies:
   - aeson
   - base >= 4.7 && < 5
   - bytestring
+  - containers
   - directory
   - exceptions
   - filepath
   - http-types
+  - magic
+  - mime-types
   - protolude
   - regex-tdfa
   - servant
@@ -39,6 +42,7 @@ library:
   exposed-modules:
     - SQLiteDAV.API
     - SQLiteDAV.HTTPExtensions
+    - SQLiteDAV.MimeDetect
     - SQLiteDAV.Properties
     - SQLiteDAV.Server
     - SQLiteDAV.Utils
