@@ -7,6 +7,7 @@
 module SQLiteDAV.Server where
 
 import Protolude (
+  Bool (False, True),
   Char,
   FilePath,
   IO,
@@ -18,6 +19,7 @@ import Protolude (
   concatMap,
   elem,
   filter,
+  fmap,
   fromIntegral,
   fromMaybe,
   fst,
@@ -25,6 +27,7 @@ import Protolude (
   intercalate,
   mapM,
   mempty,
+  not,
   null,
   pure,
   readMaybe,
@@ -51,6 +54,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as Char8
 import Data.ByteString.Lazy qualified as BL
+import Data.Char (isSpace)
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List (isInfixOf, isPrefixOf)
@@ -87,6 +91,7 @@ import Servant (
   err400,
   err404,
   errBody,
+  noHeader,
   serve,
   throwError,
   (:<|>) ((:<|>)),
@@ -576,21 +581,94 @@ getPropsForCell dbPath urlPath propNames tableName rowidMb colNameWithExt = do
   pure [rootPropResult]
 
 
+-- | Subset of RFC 8144 / 7240 Prefer header values that the server honors.
+data Preferences = Preferences
+  { depthNoroot :: Bool
+  , returnMinimal :: Bool
+  }
+
+
+emptyPreferences :: Preferences
+emptyPreferences = Preferences{depthNoroot = False, returnMinimal = False}
+
+
+parsePrefer :: Maybe Text -> Preferences
+parsePrefer Nothing = emptyPreferences
+parsePrefer (Just header) =
+  let
+    tokens =
+      header
+        & toLower
+        & T.splitOn ","
+        & fmap (T.takeWhile (/= ';'))
+        & fmap (T.filter (not . isSpace))
+  in
+    Preferences
+      { depthNoroot = "depth-noroot" `elem` tokens
+      , returnMinimal = "return=minimal" `elem` tokens
+      }
+
+
+{-| Apply the requested preferences and return what was actually applied.
+`depth-noroot` only applies when Depth is "1" or "infinity"
+(RFC 8144, Section 2.1).
+-}
+applyPreferences ::
+  Preferences ->
+  Maybe Text ->
+  [PropResults] ->
+  (Preferences, [PropResults])
+applyPreferences prefs depth results =
+  let
+    depthLow = depth <&> toLower
+    isDepthHigh = depthLow == Just "1" || depthLow == Just "infinity"
+    dropRoot = prefs.depthNoroot && isDepthHigh
+    afterRoot = case (dropRoot, results) of
+      (True, _ : rest) -> rest
+      _ -> results
+    afterMinimal =
+      if prefs.returnMinimal
+        then afterRoot <&> \r -> r{propMissing = []}
+        else afterRoot
+    appliedPrefs =
+      Preferences
+        { depthNoroot = dropRoot
+        , returnMinimal = prefs.returnMinimal
+        }
+  in
+    (appliedPrefs, afterMinimal)
+
+
+preferenceAppliedHeader :: Preferences -> Maybe String
+preferenceAppliedHeader prefs =
+  let
+    parts =
+      ["depth-noroot" | prefs.depthNoroot]
+        ++ ["return=minimal" | prefs.returnMinimal]
+  in
+    case parts of
+      [] -> Nothing
+      xs -> Just (intercalate ", " xs)
+
+
 doPropFind ::
   String ->
   [String] ->
   Maybe Text ->
+  Maybe Text ->
   Element ->
-  Handler [PropResults]
-doPropFind dbPath urlPath depth doc = do
+  Handler
+    (Headers '[Header "Preference-Applied" String] [PropResults])
+doPropFind dbPath urlPath depth preferMb doc = do
   let
     urlPathNorm = urlPath & filter (/= "")
     propNames =
       [ qName $ elName x
       | Elem x <- concatMap elContent ([x | Elem x <- elContent doc])
       ]
+    prefs = parsePrefer preferMb
 
-  case urlPathNorm of
+  results <- case urlPathNorm of
     [] -> do
       let itemType = Folder
 
@@ -653,6 +731,11 @@ doPropFind dbPath urlPath depth doc = do
         tableName
         (readMaybe rowName)
         colNameWithExt
+
+  let (appliedPrefs, filtered) = applyPreferences prefs depth results
+  pure $ case preferenceAppliedHeader appliedPrefs of
+    Nothing -> noHeader filtered
+    Just hdr -> addHeader hdr filtered
 
 
 -- | Escape double quotes in SQL strings

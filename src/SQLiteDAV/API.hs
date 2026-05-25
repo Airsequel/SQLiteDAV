@@ -74,8 +74,11 @@ type WebDavAPI =
     :> Mkcol '[] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Depth" Text
+      :> Header "Prefer" Text
       :> ReqBody '[AppXML, TextXML] Element
-      :> Propfind '[AppXML, TextXML] [PropResults]
+      :> Propfind
+           '[AppXML, TextXML]
+           (Headers '[Header "Preference-Applied" String] [PropResults])
     :<|> CaptureAll "segments" String
       :> Get '[OctetStream] WithContentType
     :<|> CaptureAll "segments" String

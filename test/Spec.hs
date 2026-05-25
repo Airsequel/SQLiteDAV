@@ -79,6 +79,17 @@ propfind path depth =
     ]
 
 
+propfindPrefer :: _ -> Integer -> _ -> _ -> WaiSession st SResponse
+propfindPrefer path depth prefer =
+  request
+    "PROPFIND"
+    path
+    [ (hContentType, "application/xml")
+    , ("Depth", show depth)
+    , ("Prefer", prefer)
+    ]
+
+
 lock :: _ -> _ -> WaiSession st SResponse
 lock path =
   request
@@ -518,6 +529,237 @@ spec = with mkTestApp $ do
         `shouldRespondWith` ResponseMatcher
           { matchStatus = 207
           , matchHeaders = [davHeader, xmlHeader]
+          , matchBody = fromString (T.unpack xmlResponse)
+          }
+
+    it "Prefer: depth-noroot omits the root resource" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<propfind xmlns:D=\"DAV:\">\
+            \  <prop>\
+            \    <getlastmodified/>\
+            \    <resourcetype/>\
+            \  </prop>\
+            \</propfind>\
+            \"
+        xmlResponse =
+          normalizeXml
+            "<multistatus xmlns:D=\"DAV:\">\
+            \  <response>\
+            \    <href>/users/1</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \  <response>\
+            \    <href>/users/2</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \  <response>\
+            \    <href>/users/3</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \</multistatus>\
+            \"
+        result =
+          propfindPrefer
+            "/users/"
+            1
+            "depth-noroot"
+            (fromString (T.unpack xmlRequest))
+
+      rmModified result
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 207
+          , matchHeaders =
+              [ davHeader
+              , xmlHeader
+              , "Preference-Applied" <:> "depth-noroot"
+              ]
+          , matchBody = fromString (T.unpack xmlResponse)
+          }
+
+    it "Prefer: depth-noroot is ignored when Depth is 0" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<propfind xmlns:D=\"DAV:\">\
+            \  <prop>\
+            \    <getlastmodified/>\
+            \    <resourcetype/>\
+            \  </prop>\
+            \</propfind>\
+            \"
+        xmlResponse =
+          normalizeXml
+            "<multistatus xmlns:D=\"DAV:\">\
+            \  <response>\
+            \    <href>/users</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \</multistatus>\
+            \"
+        result =
+          propfindPrefer
+            "/users"
+            0
+            "depth-noroot"
+            (fromString (T.unpack xmlRequest))
+
+      rmModified result
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 207
+          , matchHeaders = [davHeader, xmlHeader]
+          , matchBody = fromString (T.unpack xmlResponse)
+          }
+
+    it "Prefer: return=minimal omits 404 propstat blocks" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<propfind xmlns:D=\"DAV:\">\
+            \  <prop>\
+            \    <getlastmodified/>\
+            \    <getcontentlength/>\
+            \    <creationdate/>\
+            \    <resourcetype/>\
+            \  </prop>\
+            \</propfind>\
+            \"
+        xmlResponse =
+          normalizeXml
+            "<multistatus xmlns:D=\"DAV:\">\
+            \  <response>\
+            \    <href>/users</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \</multistatus>\
+            \"
+        result =
+          propfindPrefer
+            "/users"
+            0
+            "return=minimal"
+            (fromString (T.unpack xmlRequest))
+
+      rmModified result
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 207
+          , matchHeaders =
+              [ davHeader
+              , xmlHeader
+              , "Preference-Applied" <:> "return=minimal"
+              ]
+          , matchBody = fromString (T.unpack xmlResponse)
+          }
+
+    it "Prefer can combine depth-noroot and return=minimal" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<propfind xmlns:D=\"DAV:\">\
+            \  <prop>\
+            \    <getlastmodified/>\
+            \    <creationdate/>\
+            \    <resourcetype/>\
+            \  </prop>\
+            \</propfind>\
+            \"
+        xmlResponse =
+          normalizeXml
+            "<multistatus xmlns:D=\"DAV:\">\
+            \  <response>\
+            \    <href>/users/1</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \  <response>\
+            \    <href>/users/2</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \  <response>\
+            \    <href>/users/3</href>\
+            \    <propstat>\
+            \      <status>HTTP/1.1 200 OK</status>\
+            \      <prop>\
+            \        <resourcetype>\
+            \          <collection />\
+            \        </resourcetype>\
+            \        <getlastmodified>REMOVED</getlastmodified>\
+            \      </prop>\
+            \    </propstat>\
+            \  </response>\
+            \</multistatus>\
+            \"
+        result =
+          propfindPrefer
+            "/users/"
+            1
+            "depth-noroot, return=minimal"
+            (fromString (T.unpack xmlRequest))
+
+      rmModified result
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 207
+          , matchHeaders =
+              [ davHeader
+              , xmlHeader
+              , "Preference-Applied" <:> "depth-noroot, return=minimal"
+              ]
           , matchBody = fromString (T.unpack xmlResponse)
           }
 
