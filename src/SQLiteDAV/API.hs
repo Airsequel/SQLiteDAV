@@ -13,6 +13,7 @@ import Servant (
   CaptureAll,
   Get,
   Header,
+  Headers,
   JSON,
   NoContent,
   OctetStream,
@@ -31,12 +32,14 @@ import Text.XML.Light (Element)
 import SQLiteDAV.HTTPExtensions (
   AppXML,
   Copy,
+  Lock,
   Mkcol,
   Move,
   Propfind,
   TextXML,
+  Unlock,
  )
-import SQLiteDAV.Properties (PropResults)
+import SQLiteDAV.Properties (LockResult, PropResults)
 import SQLiteDAV.Utils (sqlDataToFileContent)
 
 
@@ -88,13 +91,19 @@ type WebDavAPI =
       :> Header "Destination" String
       :> Copy '[] NoContent
     :<|> CaptureAll "segments" String
+      :> Lock
+           '[AppXML, TextXML]
+           (Headers '[Header "Lock-Token" String] LockResult)
+    :<|> CaptureAll "segments" String
+      :> Header "Lock-Token" String
+      -- `PlainText` is necessary to not return 406 errors
+      :> Unlock '[PlainText] NoContent
+    :<|> CaptureAll "segments" String
       -- `PlainText` is necessary to not return 406 errors
       :> Options '[PlainText] NoContent
 
 
 --  :<|> Proppatch '[JSON] [Int]
---  :<|> Lock '[JSON] [Int]
---  :<|> Unlock '[JSON] [Int]
 --  :<|> Orderpatch '[JSON] [Int]
 --  :<|> Post '[JSON] [Int]
 

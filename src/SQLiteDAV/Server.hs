@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Use list comprehension" #-}
@@ -77,8 +78,11 @@ import Network.Wai.Middleware.Servant.Options (provideOptions)
 import Servant (
   Application,
   Handler,
+  Header,
+  Headers,
   NoContent (NoContent),
   Server,
+  addHeader,
   err400,
   err404,
   errBody,
@@ -106,6 +110,7 @@ import Text.XML.Light (
 import SQLiteDAV.API (WebDavAPI, WithContentType (..), webDavAPI)
 import SQLiteDAV.Properties (
   ItemType (File, Folder),
+  LockResult (LockResult, lockRoot, lockToken),
   PropResults (PropResults, itemType, propMissing, propName, props),
  )
 import SQLiteDAV.Utils (formatTimestamp, sqlDataToText)
@@ -123,6 +128,8 @@ server dbPath =
     :<|> doDelete dbPath
     :<|> doMove
     :<|> doCopy
+    :<|> doLock
+    :<|> doUnlock
     :<|> doOptions
 
 
@@ -146,6 +153,29 @@ doMove urlPath destinationMb = do
 doCopy :: [String] -> Maybe String -> Handler NoContent
 doCopy urlPath destinationMb = do
   traceM $ show urlPath ++ " copied to " ++ show destinationMb
+  pure NoContent
+
+
+-- Locks are not tracked; the fake token only satisfies clients
+-- (e.g. macOS Finder) that require LOCK before issuing a PUT.
+fakeLockToken :: String
+fakeLockToken = "urn:uuid:00000000-0000-0000-0000-000000000001"
+
+
+doLock ::
+  [String] ->
+  Handler (Headers '[Header "Lock-Token" String] LockResult)
+doLock urlPath = do
+  let
+    root = "/" ++ intercalate "/" urlPath
+    lockResult =
+      LockResult{lockToken = fakeLockToken, lockRoot = root}
+  pure $ addHeader ("<" ++ fakeLockToken ++ ">") lockResult
+
+
+doUnlock :: [String] -> Maybe String -> Handler NoContent
+doUnlock urlPath tokenMb = do
+  traceM $ show urlPath ++ " unlocked with token " ++ show tokenMb
   pure NoContent
 
 

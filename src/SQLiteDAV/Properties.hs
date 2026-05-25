@@ -93,6 +93,16 @@ data PropResults = PropResults
 instance ToJSON PropResults
 
 
+data LockResult = LockResult
+  { lockToken :: String
+  , lockRoot :: String
+  }
+  deriving (Show, Generic)
+
+
+instance ToJSON LockResult
+
+
 e :: String -> [Attr] -> [Element] -> Element
 e name attrs content =
   Element
@@ -135,6 +145,40 @@ instance MimeRender AppXML [PropResults] where
 
 instance MimeRender TextXML [PropResults] where
   mimeRender _ = xmlMimeRender
+
+
+lockResultToXml :: LockResult -> Element
+lockResultToXml LockResult{..} =
+  e
+    "prop"
+    [Attr (unqual "xmlns:D") "DAV:"]
+    [ e
+        "lockdiscovery"
+        []
+        [ e
+            "activelock"
+            []
+            [ e "locktype" [] [e "write" [] []]
+            , e "lockscope" [] [e "exclusive" [] []]
+            , te "depth" [] "infinity"
+            , te "timeout" [] "Second-604800"
+            , e "locktoken" [] [te "href" [] lockToken]
+            , e "lockroot" [] [te "href" [] lockRoot]
+            ]
+        ]
+    ]
+
+
+xmlMimeRenderLock :: LockResult -> Lazy.Char8.ByteString
+xmlMimeRenderLock = Lazy.Char8.pack . showTopElement . lockResultToXml
+
+
+instance MimeRender AppXML LockResult where
+  mimeRender _ = xmlMimeRenderLock
+
+
+instance MimeRender TextXML LockResult where
+  mimeRender _ = xmlMimeRenderLock
 
 
 instance MimeRender PlainText SQLData where

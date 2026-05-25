@@ -56,7 +56,7 @@ type Mkcol = Verb 'MKCOL 200
 type Propfind = Verb 'PROPFIND 207
 type Proppatch = Verb 'PROPPATCH 200
 type Lock = Verb 'LOCK 200
-type Unlock = Verb 'UNLOCK 200
+type Unlock = Verb 'UNLOCK 204
 type Orderpatch = Verb 'ORDERPATCH 200
 
 

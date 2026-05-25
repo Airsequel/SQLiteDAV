@@ -79,6 +79,23 @@ propfind path depth =
     ]
 
 
+lock :: _ -> _ -> WaiSession st SResponse
+lock path =
+  request
+    "LOCK"
+    path
+    [(hContentType, "application/xml")]
+
+
+unlock :: _ -> _ -> WaiSession st SResponse
+unlock path token =
+  request
+    "UNLOCK"
+    path
+    [("Lock-Token", token)]
+    ""
+
+
 -- | Remove leading whitespace on each line of a string
 rmLeadSpace :: Text -> Text
 rmLeadSpace = T.unlines . fmap (T.dropWhile isSpace) . T.lines
@@ -523,6 +540,59 @@ spec = with mkTestApp $ do
           , matchHeaders = [davHeader]
           , matchBody = "NULL"
           }
+
+  describe "LOCK" $ do
+    it "returns a fake lock token and lockdiscovery XML" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<lockinfo xmlns:D=\"DAV:\">\
+            \  <lockscope><exclusive/></lockscope>\
+            \  <locktype><write/></locktype>\
+            \  <owner>\
+            \    <href>http://example.com/owner</href>\
+            \  </owner>\
+            \</lockinfo>\
+            \"
+        xmlResponse =
+          normalizeXml
+            "<prop xmlns:D=\"DAV:\">\
+            \  <lockdiscovery>\
+            \    <activelock>\
+            \      <locktype><write /></locktype>\
+            \      <lockscope><exclusive /></lockscope>\
+            \      <depth>infinity</depth>\
+            \      <timeout>Second-604800</timeout>\
+            \      <locktoken>\
+            \        <href>urn:uuid:00000000-0000-0000-0000-000000000001</href>\
+            \      </locktoken>\
+            \      <lockroot>\
+            \        <href>/users/1/name.txt</href>\
+            \      </lockroot>\
+            \    </activelock>\
+            \  </lockdiscovery>\
+            \</prop>\
+            \"
+        result = lock "/users/1/name.txt" (fromString (T.unpack xmlRequest))
+
+      result
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders =
+              [ davHeader
+              , xmlHeader
+              , "Lock-Token"
+                  <:> "<urn:uuid:00000000-0000-0000-0000-000000000001>"
+              ]
+          , matchBody = fromString (T.unpack xmlResponse)
+          }
+
+  describe "UNLOCK" $ do
+    it "returns 204 No Content" $ do
+      unlock
+        "/users/1/name.txt"
+        "<urn:uuid:00000000-0000-0000-0000-000000000001>"
+        `shouldRespondWith` 204
 
 
 main :: IO ()
