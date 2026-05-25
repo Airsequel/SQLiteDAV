@@ -25,15 +25,18 @@ import Protolude (
   fst,
   headMay,
   intercalate,
+  lastMay,
   mapM,
   mempty,
   not,
   null,
+  otherwise,
   pure,
   readMaybe,
   sequence,
   show,
   snd,
+  truncate,
   zip,
   ($),
   (&&),
@@ -62,7 +65,7 @@ import Data.Maybe (Maybe (..), catMaybes, mapMaybe)
 import Data.Text (Text, toLower)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
-import Data.Time (FormatTime, defaultTimeLocale, formatTime)
+import Data.Time (FormatTime, UTCTime, defaultTimeLocale, formatTime)
 import Data.Traversable (for)
 import Database.SQLite.Simple (
   Query (Query),
@@ -120,7 +123,10 @@ import SQLiteDAV.Properties (
   LockResult (LockResult, lockRoot, lockToken),
   PropResults (PropResults, itemType, propMissing, propName, props),
  )
+import SQLiteDAV.SQLAR qualified as SQLAR
 import SQLiteDAV.Utils (formatTimestamp, sqlDataToText)
+
+import Data.Time.Clock.POSIX (getPOSIXTime)
 
 
 type String = [Char]
@@ -128,10 +134,10 @@ type String = [Char]
 
 server :: FilePath -> Server WebDavAPI
 server dbPath =
-  doMkCol
+  doMkCol dbPath
     :<|> doPropFind dbPath
     :<|> doGet dbPath
-    :<|> doPut
+    :<|> doPut dbPath
     :<|> doDelete dbPath
     :<|> doMove
     :<|> doCopy
@@ -186,10 +192,34 @@ doUnlock urlPath tokenMb = do
   pure NoContent
 
 
-doPut :: [String] -> ByteString -> Handler NoContent
-doPut urlPath body = do
-  traceM $ "put " ++ show body ++ " into " ++ show urlPath
-  pure NoContent
+doPut :: FilePath -> [String] -> ByteString -> Handler NoContent
+doPut dbPath urlPath body = do
+  let urlPathNorm = urlPath & filter (/= "")
+  case urlPathNorm of
+    tableName : rest@(_ : _) -> do
+      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+      if isSqlar
+        then do
+          now <- liftIO getPOSIXTime
+          let archive = SQLAR.archivePath rest
+              -- 0o100644 == regular file with 0644 perms
+              mode :: Integer
+              mode = 0o100644
+          liftIO $
+            SQLAR.insertEntry
+              dbPath
+              (T.pack tableName)
+              archive
+              (fromInteger mode)
+              (truncate now)
+              body
+          pure NoContent
+        else do
+          traceM $ "put " ++ show body ++ " into " ++ show urlPath
+          pure NoContent
+    _ -> do
+      traceM $ "put " ++ show body ++ " into " ++ show urlPath
+      pure NoContent
 
 
 dataToContentType :: SQLData -> IO BL.ByteString
@@ -220,41 +250,69 @@ dataToFileExt sqlData =
 
 doGet :: FilePath -> [String] -> Handler WithContentType
 doGet dbPath urlPath = do
-  case urlPath of
-    tableName : rowidStr : colNameWithExt : _rest ->
-      case readMaybe rowidStr of
-        Nothing ->
-          throwError err400{errBody = "Invalid rowid"}
-        Just (rowid :: Integer) -> do
-          colResult <- liftIO $ withConnection dbPath $ \conn -> do
-            let
-              colName = dropExtension colNameWithExt
-              sqlQuery =
-                Query $
-                  "SELECT "
-                    <> quoteKeyword (T.pack colName)
-                    <> " FROM "
-                    <> quoteKeyword (T.pack tableName)
-                    <> " WHERE rowid == ?"
-            query conn sqlQuery (Only rowid)
-
-          case colResult :: [Only SQLData] of
-            [] ->
-              throwError err404{errBody = "Row not found"}
-            [Only colData] -> do
-              contentType <- liftIO $ dataToContentType colData
-              pure $
-                WithContentType
-                  { header = contentType
-                  , content = colData
-                  }
-            _ ->
-              throwError
-                err400
-                  { errBody = "Multiple rows with the same rowid exist"
-                  }
+  let urlPathNorm = urlPath & filter (/= "")
+  case urlPathNorm of
+    tableName : rest@(_ : _) -> do
+      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+      if isSqlar
+        then doGetSqlar dbPath tableName rest
+        else case rest of
+          rowidStr : colNameWithExt : _rest ->
+            doGetCell dbPath tableName rowidStr colNameWithExt
+          _ -> throwError err404
     _ ->
       throwError err404
+
+
+doGetCell :: FilePath -> String -> String -> String -> Handler WithContentType
+doGetCell dbPath tableName rowidStr colNameWithExt =
+  case readMaybe rowidStr of
+    Nothing ->
+      throwError err400{errBody = "Invalid rowid"}
+    Just (rowid :: Integer) -> do
+      colResult <- liftIO $ withConnection dbPath $ \conn -> do
+        let
+          colName = dropExtension colNameWithExt
+          sqlQuery =
+            Query $
+              "SELECT "
+                <> quoteKeyword (T.pack colName)
+                <> " FROM "
+                <> quoteKeyword (T.pack tableName)
+                <> " WHERE rowid == ?"
+        query conn sqlQuery (Only rowid)
+
+      case colResult :: [Only SQLData] of
+        [] ->
+          throwError err404{errBody = "Row not found"}
+        [Only colData] -> do
+          contentType <- liftIO $ dataToContentType colData
+          pure $
+            WithContentType
+              { header = contentType
+              , content = colData
+              }
+        _ ->
+          throwError
+            err400
+              { errBody = "Multiple rows with the same rowid exist"
+              }
+
+
+doGetSqlar :: FilePath -> String -> [String] -> Handler WithContentType
+doGetSqlar dbPath tableName rest = do
+  let archive = SQLAR.archivePath rest
+  fileMb <- liftIO $ SQLAR.lookupEntry dbPath (T.pack tableName) archive
+  case fileMb of
+    Nothing ->
+      throwError err404{errBody = "File not found in archive"}
+    Just file -> do
+      mime <- liftIO $ detectMimeType (SQLAR.fileContent file)
+      pure $
+        WithContentType
+          { header = BL.fromStrict (T.encodeUtf8 mime)
+          , content = SQLBlob (SQLAR.fileContent file)
+          }
 
 
 getCellSize :: FilePath -> [String] -> Handler Integer
@@ -297,32 +355,66 @@ getCellSize dbPath urlPath = do
 
 doDelete :: FilePath -> [String] -> Handler NoContent
 doDelete dbPath urlPath = do
-  case urlPath & filter (/= "") of
-    tableName : rowidStr : colNameWithExt : _rest ->
-      case readMaybe rowidStr of
-        Nothing ->
-          throwError err400{errBody = "Invalid rowid"}
-        Just (rowid :: Integer) -> do
-          let
-            colName = dropExtension colNameWithExt
-            sqlQuery =
-              Query $
-                "UPDATE "
-                  <> quoteKeyword (T.pack tableName)
-                  <> " SET "
-                  <> quoteKeyword (T.pack colName)
-                  <> " = NULL WHERE rowid == ?"
-          liftIO $ withConnection dbPath $ \conn ->
-            execute conn sqlQuery (Only rowid)
+  let urlPathNorm = urlPath & filter (/= "")
+  case urlPathNorm of
+    tableName : rest@(_ : _) -> do
+      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+      if isSqlar
+        then do
+          let archive = SQLAR.archivePath rest
+          liftIO $ SQLAR.deleteSubtree dbPath (T.pack tableName) archive
           pure NoContent
+        else case rest of
+          rowidStr : colNameWithExt : _rest ->
+            case readMaybe rowidStr of
+              Nothing ->
+                throwError err400{errBody = "Invalid rowid"}
+              Just (rowid :: Integer) -> do
+                let
+                  colName = dropExtension colNameWithExt
+                  sqlQuery =
+                    Query $
+                      "UPDATE "
+                        <> quoteKeyword (T.pack tableName)
+                        <> " SET "
+                        <> quoteKeyword (T.pack colName)
+                        <> " = NULL WHERE rowid == ?"
+                liftIO $ withConnection dbPath $ \conn ->
+                  execute conn sqlQuery (Only rowid)
+                pure NoContent
+          _ -> throwError err404
     _ ->
       throwError err404
 
 
-doMkCol :: [String] -> Handler NoContent
-doMkCol urlPath = do
-  traceM $ show urlPath ++ " collection created"
-  pure NoContent
+doMkCol :: FilePath -> [String] -> Handler NoContent
+doMkCol dbPath urlPath = do
+  let urlPathNorm = urlPath & filter (/= "")
+  case urlPathNorm of
+    tableName : rest@(_ : _) -> do
+      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+      if isSqlar
+        then do
+          now <- liftIO getPOSIXTime
+          let archive = SQLAR.archivePath rest
+              -- 0o040755 == directory with 0755 perms
+              mode :: Integer
+              mode = 0o040755
+          liftIO $
+            SQLAR.insertEntry
+              dbPath
+              (T.pack tableName)
+              archive
+              (fromInteger mode)
+              (truncate now)
+              ByteString.empty
+          pure NoContent
+        else do
+          traceM $ show urlPath ++ " collection created"
+          pure NoContent
+    _ -> do
+      traceM $ show urlPath ++ " collection created"
+      pure NoContent
 
 
 propNameToEntry ::
@@ -581,6 +673,113 @@ getPropsForCell dbPath urlPath propNames tableName rowidMb colNameWithExt = do
   pure [rootPropResult]
 
 
+sqlarPropEntry ::
+  FilePath ->
+  ItemType ->
+  Integer ->
+  Maybe UTCTime ->
+  String ->
+  Handler (Maybe (String, String))
+sqlarPropEntry dbPath theItemType size mtime propNameStr =
+  case propNameStr of
+    "creationdate" -> pure Nothing
+    "getcontentlength" ->
+      pure $ case theItemType of
+        File -> Just (propNameStr, show size)
+        Folder -> Nothing
+    "getlastmodified" -> do
+      txt <- case mtime of
+        Just t -> pure (formatTimestamp t)
+        Nothing -> do
+          dbMtime <- liftIO $ getModificationTime dbPath
+          pure (formatTimestamp dbMtime)
+      pure $ Just (propNameStr, T.unpack txt)
+    _ -> pure Nothing
+
+
+sqlarEntryToPropResults ::
+  FilePath ->
+  [String] ->
+  String ->
+  SQLAR.SqlarEntry ->
+  Handler PropResults
+sqlarEntryToPropResults dbPath propNames pName entry = do
+  let entryItemType = SQLAR.entryType entry
+  pairs <-
+    propNames
+      & mapM
+        ( sqlarPropEntry
+            dbPath
+            entryItemType
+            (SQLAR.entrySize entry)
+            (SQLAR.entryMtime entry)
+        )
+      <&> catMaybes
+  pure $
+    PropResults
+      { propName = pName
+      , itemType = entryItemType
+      , props = pairs
+      , propMissing = propNames & keepMissingNames entryItemType
+      }
+
+
+getPropsForSqlar ::
+  FilePath ->
+  Maybe Text ->
+  [String] ->
+  String ->
+  [String] ->
+  Handler [PropResults]
+getPropsForSqlar dbPath depth propNames tableName restPath = do
+  let
+    restPathClean = restPath & filter (/= "")
+    archive = SQLAR.archivePath restPathClean
+
+  case restPathClean of
+    [] -> pure ()
+    _ -> ignoreHiddenFiles (fromMaybe "" (lastMay restPathClean))
+
+  resolved <- liftIO $ SQLAR.resolvePath dbPath (T.pack tableName) archive
+  case resolved of
+    Nothing ->
+      throwError err404{errBody = "Path not found in archive"}
+    Just entry -> do
+      let
+        rootHref =
+          if T.null archive
+            then tableName
+            else tableName ++ "/" ++ T.unpack archive
+        depthLow = depth <&> toLower
+        isDeep = depthLow == Just "1" || depthLow == Just "infinity"
+        -- Use the archive-root href when restPath is empty,
+        -- which gives the table a folder identity.
+        rootEntry = case restPathClean of
+          [] -> SQLAR.rootEntry
+          _ -> entry
+
+      rootResult <- sqlarEntryToPropResults dbPath propNames rootHref rootEntry
+
+      case SQLAR.entryType entry of
+        File -> pure [rootResult]
+        Folder
+          | not isDeep -> pure [rootResult]
+          | otherwise -> do
+              children <-
+                liftIO $ SQLAR.listAt dbPath (T.pack tableName) archive
+              childResults <-
+                children
+                  & mapM
+                    ( \child -> do
+                        let childHref =
+                              tableName
+                                ++ "/"
+                                ++ T.unpack (SQLAR.entryFullName child)
+                        sqlarEntryToPropResults dbPath propNames childHref child
+                    )
+              pure (rootResult : childResults)
+
+
 -- | Subset of RFC 8144 / 7240 Prefer header values that the server honors.
 data Preferences = Preferences
   { depthNoroot :: Bool
@@ -711,26 +910,29 @@ doPropFind dbPath urlPath depth preferMb doc = do
                     , propMissing = propNames & keepMissingNames Folder
                     }
     --
-    [tableName] ->
-      getPropsForTable dbPath urlPathNorm depth propNames tableName
-    --
-    [tableName, rowName] ->
-      getPropsForRow
-        dbPath
-        urlPathNorm
-        depth
-        propNames
-        tableName
-        (readMaybe rowName)
-    --
-    tableName : rowName : colNameWithExt : _rest ->
-      getPropsForCell
-        dbPath
-        urlPathNorm
-        propNames
-        tableName
-        (readMaybe rowName)
-        colNameWithExt
+    tableName : restPath -> do
+      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+      if isSqlar
+        then getPropsForSqlar dbPath depth propNames tableName restPath
+        else case restPath of
+          [] ->
+            getPropsForTable dbPath urlPathNorm depth propNames tableName
+          [rowName] ->
+            getPropsForRow
+              dbPath
+              urlPathNorm
+              depth
+              propNames
+              tableName
+              (readMaybe rowName)
+          rowName : colNameWithExt : _rest ->
+            getPropsForCell
+              dbPath
+              urlPathNorm
+              propNames
+              tableName
+              (readMaybe rowName)
+              colNameWithExt
 
   let (appliedPrefs, filtered) = applyPreferences prefs depth results
   pure $ case preferenceAppliedHeader appliedPrefs of

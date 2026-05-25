@@ -71,7 +71,8 @@ instance AllCTRender '[] NoContent where
 -- TODO: Figure out why JSON is necessary for every endpoint and remove it
 type WebDavAPI =
   CaptureAll "segments" String
-    :> Mkcol '[] NoContent
+    -- `PlainText` is necessary to not return 406 errors
+    :> Mkcol '[PlainText] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Depth" Text
       :> Header "Prefer" Text
@@ -83,7 +84,8 @@ type WebDavAPI =
       :> Get '[OctetStream] WithContentType
     :<|> CaptureAll "segments" String
       :> ReqBody '[OctetStream] ByteString
-      :> Put '[] NoContent
+      -- `PlainText` is necessary to not return 406 errors
+      :> Put '[PlainText] NoContent
     :<|> CaptureAll "segments" String
       -- `PlainText` is necessary to not return 406 errors
       :> Delete '[PlainText] NoContent

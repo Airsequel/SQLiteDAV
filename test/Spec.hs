@@ -179,6 +179,31 @@ mkTestApp = do
   pure $ webDavServer scratchDb
 
 
+-- | Same as 'mkTestApp' but for the sqlar fixture.
+mkSqlarApp :: IO _
+mkSqlarApp = do
+  let scratchDb = "test/archive_scratch.sqlar"
+  copyFile "test/archive.sqlar" scratchDb
+  pure $ webDavServer scratchDb
+
+
+put :: _ -> _ -> WaiSession st SResponse
+put path =
+  request
+    "PUT"
+    path
+    [(hContentType, "application/octet-stream")]
+
+
+mkcol :: _ -> WaiSession st SResponse
+mkcol path =
+  request
+    "MKCOL"
+    path
+    []
+    ""
+
+
 spec :: Spec
 spec = with mkTestApp $ do
   describe "OPTIONS" $ do
@@ -837,5 +862,238 @@ spec = with mkTestApp $ do
         `shouldRespondWith` 204
 
 
+sqlarSpec :: Spec
+sqlarSpec = with mkSqlarApp $ do
+  describe "SQLAR archive" $ do
+    describe "PROPFIND" $ do
+      it "lists top-level entries with Depth 1" $ do
+        let
+          xmlRequest =
+            normalizeXml
+              "<propfind xmlns:D=\"DAV:\">\
+              \  <prop>\
+              \    <resourcetype/>\
+              \    <getcontentlength/>\
+              \  </prop>\
+              \</propfind>\
+              \"
+          xmlResponse =
+            normalizeXml
+              "<multistatus xmlns:D=\"DAV:\">\
+              \  <response>\
+              \    <href>/sqlar</href>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 200 OK</status>\
+              \      <prop>\
+              \        <resourcetype>\
+              \          <collection />\
+              \        </resourcetype>\
+              \      </prop>\
+              \    </propstat>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 404 Not Found</status>\
+              \      <prop>\
+              \        <getcontentlength />\
+              \      </prop>\
+              \      <responsedescription>\
+              \        Property was not found\
+              \      </responsedescription>\
+              \    </propstat>\
+              \  </response>\
+              \  <response>\
+              \    <href>/sqlar/docs</href>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 200 OK</status>\
+              \      <prop>\
+              \        <resourcetype>\
+              \          <collection />\
+              \        </resourcetype>\
+              \      </prop>\
+              \    </propstat>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 404 Not Found</status>\
+              \      <prop>\
+              \        <getcontentlength />\
+              \      </prop>\
+              \      <responsedescription>\
+              \        Property was not found\
+              \      </responsedescription>\
+              \    </propstat>\
+              \  </response>\
+              \  <response>\
+              \    <href>/sqlar/readme.txt</href>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 200 OK</status>\
+              \      <prop>\
+              \        <getcontentlength>11</getcontentlength>\
+              \      </prop>\
+              \    </propstat>\
+              \  </response>\
+              \</multistatus>\
+              \"
+
+          result = propfind "/sqlar/" 1 (fromString (T.unpack xmlRequest))
+
+        result
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 207
+            , matchHeaders = [davHeader, xmlHeader]
+            , matchBody = fromString (T.unpack xmlResponse)
+            }
+
+      it "lists a nested folder" $ do
+        let
+          xmlRequest =
+            normalizeXml
+              "<propfind xmlns:D=\"DAV:\">\
+              \  <prop>\
+              \    <resourcetype/>\
+              \    <getcontentlength/>\
+              \  </prop>\
+              \</propfind>\
+              \"
+          xmlResponse =
+            normalizeXml
+              "<multistatus xmlns:D=\"DAV:\">\
+              \  <response>\
+              \    <href>/sqlar/docs</href>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 200 OK</status>\
+              \      <prop>\
+              \        <resourcetype>\
+              \          <collection />\
+              \        </resourcetype>\
+              \      </prop>\
+              \    </propstat>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 404 Not Found</status>\
+              \      <prop>\
+              \        <getcontentlength />\
+              \      </prop>\
+              \      <responsedescription>\
+              \        Property was not found\
+              \      </responsedescription>\
+              \    </propstat>\
+              \  </response>\
+              \  <response>\
+              \    <href>/sqlar/docs/guide</href>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 200 OK</status>\
+              \      <prop>\
+              \        <resourcetype>\
+              \          <collection />\
+              \        </resourcetype>\
+              \      </prop>\
+              \    </propstat>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 404 Not Found</status>\
+              \      <prop>\
+              \        <getcontentlength />\
+              \      </prop>\
+              \      <responsedescription>\
+              \        Property was not found\
+              \      </responsedescription>\
+              \    </propstat>\
+              \  </response>\
+              \  <response>\
+              \    <href>/sqlar/docs/intro.md</href>\
+              \    <propstat>\
+              \      <status>HTTP/1.1 200 OK</status>\
+              \      <prop>\
+              \        <getcontentlength>8</getcontentlength>\
+              \      </prop>\
+              \    </propstat>\
+              \  </response>\
+              \</multistatus>\
+              \"
+
+          result = propfind "/sqlar/docs" 1 (fromString (T.unpack xmlRequest))
+
+        result
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 207
+            , matchHeaders = [davHeader, xmlHeader]
+            , matchBody = fromString (T.unpack xmlResponse)
+            }
+
+      it "returns 404 for missing archive paths" $ do
+        let
+          xmlRequest =
+            normalizeXml
+              "<propfind xmlns:D=\"DAV:\">\
+              \  <prop><resourcetype/></prop>\
+              \</propfind>\
+              \"
+          result =
+            propfind "/sqlar/missing" 0 (fromString (T.unpack xmlRequest))
+
+        result `shouldRespondWith` 404
+
+    describe "GET" $ do
+      it "returns file content from the archive" $ do
+        get "/sqlar/readme.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "hello world"
+            }
+
+      it "returns nested file content from the archive" $ do
+        get "/sqlar/docs/guide/setup.md"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "# Setup\n"
+            }
+
+      it "returns 404 for missing files" $ do
+        get "/sqlar/missing.txt" `shouldRespondWith` 404
+
+    describe "PUT" $ do
+      it "stores a new file in the archive" $ do
+        put "/sqlar/new.txt" "fresh content"
+          `shouldRespondWith` 200
+        get "/sqlar/new.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "fresh content"
+            }
+
+      it "replaces an existing file" $ do
+        put "/sqlar/readme.txt" "updated"
+          `shouldRespondWith` 200
+        get "/sqlar/readme.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "updated"
+            }
+
+    describe "DELETE" $ do
+      it "removes a file from the archive" $ do
+        delete "/sqlar/readme.txt" `shouldRespondWith` 204
+        get "/sqlar/readme.txt" `shouldRespondWith` 404
+
+      it "removes a folder subtree" $ do
+        delete "/sqlar/docs" `shouldRespondWith` 204
+        get "/sqlar/docs/intro.md" `shouldRespondWith` 404
+        get "/sqlar/docs/guide/setup.md" `shouldRespondWith` 404
+
+    describe "MKCOL" $ do
+      it "creates a folder entry" $ do
+        mkcol "/sqlar/empty-dir" `shouldRespondWith` 200
+        -- After creation, a child can be PUT into it
+        put "/sqlar/empty-dir/x.txt" "x" `shouldRespondWith` 200
+        get "/sqlar/empty-dir/x.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "x"
+            }
+
+
 main :: IO ()
-main = hspec spec
+main = hspec $ do
+  spec
+  sqlarSpec

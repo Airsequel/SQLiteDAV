@@ -3,3 +3,4 @@
 *~
 .direnv
 test/data_scratch.sqlite*
+test/archive_scratch.sqlar*

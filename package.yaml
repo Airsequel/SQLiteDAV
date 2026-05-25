@@ -31,6 +31,7 @@ dependencies:
   - unix
   - wai-extra
   - xml
+  - zlib
 
 default-extensions:
   - NoImplicitPrelude
@@ -45,6 +46,7 @@ library:
     - SQLiteDAV.MimeDetect
     - SQLiteDAV.Properties
     - SQLiteDAV.Server
+    - SQLiteDAV.SQLAR
     - SQLiteDAV.Utils
   language: GHC2021
 

@@ -27,6 +27,7 @@ library
       SQLiteDAV.MimeDetect
       SQLiteDAV.Properties
       SQLiteDAV.Server
+      SQLiteDAV.SQLAR
       SQLiteDAV.Utils
   other-modules:
       Paths_SQLiteDAV
@@ -59,6 +60,7 @@ library
     , unix
     , wai-extra
     , xml
+    , zlib
   default-language: GHC2021
 
 executable sqlitedav
@@ -98,6 +100,7 @@ executable sqlitedav
     , wai-extra
     , warp
     , xml
+    , zlib
   default-language: GHC2021
 
 test-suite sqlitedav-test
@@ -139,4 +142,5 @@ test-suite sqlitedav-test
     , wai
     , wai-extra
     , xml
+    , zlib
   default-language: GHC2021
