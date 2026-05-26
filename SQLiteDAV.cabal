@@ -6,6 +6,22 @@ cabal-version: 1.12
 
 name:           SQLiteDAV
 version:        0.2.0.0
+synopsis:       WebDAV server that maps an SQLite database to directories and files.
+description:    SQLiteDAV is a WebDAV server that exposes an SQLite database as a
+                filesystem-like hierarchy.
+                .
+                It supports two modes:
+                .
+                * Plain SQLite databases, where tables become folders, rows become
+                  folders keyed by rowid, and columns become files named
+                  @\<col\>.\<ext\>@ with the extension derived from the cell's type.
+                .
+                * SQLite Archive (sqlar) databases, where paths inside the archive
+                  table are exposed as a filesystem.
+                .
+                This lets you mount an SQLite database via any WebDAV client (Finder,
+                GNOME Files, Windows Explorer, davfs2, etc.) and browse, read, and
+                edit its contents as regular files and folders.
 category:       Web, Database
 homepage:       https://github.com/Airsequel/SQLiteDAV#readme
 bug-reports:    https://github.com/Airsequel/SQLiteDAV/issues
