@@ -37,9 +37,11 @@ import Data.String (fromString)
 import Data.Text qualified as T
 import Data.Time (getCurrentTime)
 import Database.SQLite.Simple (
+  Only (Only),
   SQLData (SQLBlob),
   execute,
   execute_,
+  query,
   withConnection,
  )
 import Debug.Trace (traceM)
@@ -224,6 +226,19 @@ put path =
     "PUT"
     path
     [(hContentType, "application/octet-stream")]
+
+
+{-| Report @typeof(col)@ for a given users row in the scratch fixture.
+Used by the PUT type-preservation tests.
+-}
+typeofCell :: Text -> Int -> IO Text
+typeofCell colName rowid =
+  withConnection "test/data_scratch.sqlite" $ \conn -> do
+    let q = fromString ("SELECT typeof(" <> T.unpack colName <> ") FROM users WHERE rowid = ?")
+    rows :: [Only Text] <- query conn q (Only rowid)
+    pure $ case rows of
+      [Only t] -> t
+      _ -> "missing"
 
 
 mkcol :: _ -> WaiSession st SResponse
@@ -1319,6 +1334,30 @@ plainSpec = with mkTestApp $ do
 
       it "returns 405 when targeting a row instead of a cell" $ do
         put "/users/1" "x" `shouldRespondWith` 405
+
+      it "keeps the TEXT column's storage type after a PUT" $ do
+        put "/users/1/name.txt" "Renamed" `shouldRespondWith` 204
+        cellType <- liftIO $ typeofCell "name" 1
+        liftIO $ unless (cellType == "text") $
+          panic ("Expected 'text', got: " <> cellType)
+
+      it "keeps the INTEGER column's storage type after a PUT" $ do
+        put "/users/1/height.txt" "200" `shouldRespondWith` 204
+        cellType <- liftIO $ typeofCell "height" 1
+        liftIO $ unless (cellType == "integer") $
+          panic ("Expected 'integer', got: " <> cellType)
+
+      it "falls back to text for an unparseable INTEGER body" $ do
+        put "/users/1/height.txt" "tall" `shouldRespondWith` 204
+        cellType <- liftIO $ typeofCell "height" 1
+        liftIO $ unless (cellType == "text") $
+          panic ("Expected 'text', got: " <> cellType)
+
+      it "keeps the BLOB column's storage type after a PUT" $ do
+        put "/users/1/photo.png" "\xff\xd8\xff" `shouldRespondWith` 204
+        cellType <- liftIO $ typeofCell "photo" 1
+        liftIO $ unless (cellType == "blob") $
+          panic ("Expected 'blob', got: " <> cellType)
 
     describe "DELETE" $ do
       it "404s on a missing cell column" $ do

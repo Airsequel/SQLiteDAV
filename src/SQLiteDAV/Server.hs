@@ -9,6 +9,7 @@ module SQLiteDAV.Server where
 import Protolude (
   Bool (False, True),
   Char,
+  Double,
   Either (..),
   Eq,
   FilePath,
@@ -630,9 +631,11 @@ doPutPlain dbPath tableName rest body = do
         Nothing -> throwError err400{errBody = "Invalid rowid"}
         Just r -> pure r
       let colName = T.pack (dropExtension colNameWithExt)
-      colOk <- liftIO $ columnExists dbPath (T.pack tableName) colName
-      unless colOk $
-        throwError err404{errBody = "Column does not exist"}
+      declaredType <-
+        liftIO $ lookupColumnType dbPath (T.pack tableName) colName
+      affinity <- case declaredType of
+        Nothing -> throwError err404{errBody = "Column does not exist"}
+        Just t -> pure (affinityFromDeclared t)
       rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
       unless rowOk $
         throwError err409{errBody = "Row does not exist"}
@@ -643,7 +646,7 @@ doPutPlain dbPath tableName rest body = do
           (T.pack tableName)
           rowid
           colName
-          (SQLBlob body)
+          (coerceBody affinity body)
       unless wasNull $ throwError overwroteResponse
       pure NoContent
     _ ->
@@ -1528,6 +1531,78 @@ columnExists :: FilePath -> Text -> Text -> IO Bool
 columnExists dbPath tableName colName = do
   cols <- listColumnNames dbPath tableName
   pure (colName `elem` cols)
+
+
+{-| Declared type of a column, as reported by @pragma_table_info@.
+Returns Nothing when the column doesn't exist or the table is
+malformed.
+-}
+lookupColumnType :: FilePath -> Text -> Text -> IO (Maybe Text)
+lookupColumnType dbPath tableName colName =
+  withConnection dbPath $ \conn -> do
+    rows :: [Only Text] <-
+      query
+        conn
+        "SELECT type FROM pragma_table_info(?) WHERE name = ?"
+        (tableName, colName)
+    pure $ case rows of
+      [Only t] -> Just t
+      _ -> Nothing
+
+
+-- | SQLite type affinity (https://sqlite.org/datatype3.html §3.1).
+data ColumnAffinity
+  = AffinityInteger
+  | AffinityText
+  | AffinityBlob
+  | AffinityReal
+  | AffinityNumeric
+  deriving (Show, Eq)
+
+
+-- | Derive SQLite's affinity from a declared column type.
+affinityFromDeclared :: Text -> ColumnAffinity
+affinityFromDeclared declared
+  | "INT" `T.isInfixOf` upper = AffinityInteger
+  | "CHAR" `T.isInfixOf` upper
+      || "CLOB" `T.isInfixOf` upper
+      || "TEXT" `T.isInfixOf` upper =
+      AffinityText
+  | "BLOB" `T.isInfixOf` upper || T.null upper = AffinityBlob
+  | "REAL" `T.isInfixOf` upper
+      || "FLOA" `T.isInfixOf` upper
+      || "DOUB" `T.isInfixOf` upper =
+      AffinityReal
+  | otherwise = AffinityNumeric
+  where
+    upper = T.toUpper declared
+
+
+{-| Interpret a PUT body for a plain cell, honoring the column's
+affinity so a TEXT/INTEGER/REAL cell doesn't end up storing a
+BLOB. Invalid UTF-8 always falls back to SQLBlob; an unparseable
+number on an INTEGER/REAL column falls back to SQLText so the
+user's data isn't silently turned into a binary blob.
+-}
+coerceBody :: ColumnAffinity -> ByteString -> SQLData
+coerceBody affinity body =
+  case (affinity, T.decodeUtf8' body) of
+    (AffinityBlob, _) -> SQLBlob body
+    (_, Left _) -> SQLBlob body
+    (AffinityText, Right txt) -> SQLText txt
+    (AffinityInteger, Right txt) -> tryInt txt
+    (AffinityReal, Right txt) -> tryReal txt
+    (AffinityNumeric, Right txt) -> case readMaybeStripped txt of
+      Just (n :: Integer) -> SQLInteger (fromInteger n)
+      Nothing -> tryReal txt
+  where
+    readMaybeStripped t = readMaybe (T.unpack (T.strip t))
+    tryInt t = case readMaybeStripped t of
+      Just (n :: Integer) -> SQLInteger (fromInteger n)
+      Nothing -> SQLText t
+    tryReal t = case readMaybeStripped t of
+      Just (x :: Double) -> SQLFloat x
+      Nothing -> SQLText t
 
 
 rowExists :: FilePath -> Text -> Integer -> IO Bool
