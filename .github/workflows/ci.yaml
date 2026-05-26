@@ -1,10 +1,6 @@
 name: CI
 
-on:
-  push:
-    paths:
-      - .github/workflows/ci.yaml
-      - ./**/*
+on: push
 
 jobs:
   build-sqlitedav:
