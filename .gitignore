@@ -1,9 +1,9 @@
-
-.stack-work
 *~
 .direnv
-test/data_scratch.sqlite*
+.env.local
+.stack-work
 test/archive_scratch.sqlar*
 test/big_blobs_scratch.sqlite*
+test/data_scratch.sqlite*
 test/litmus_scratch.sqlar*
 test/rowname_scratch.sqlite*
