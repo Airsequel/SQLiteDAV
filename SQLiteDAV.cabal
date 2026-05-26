@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           SQLiteDAV
-version:        0.1.1.0
+version:        0.2.0.0
 category:       Web, Database
 homepage:       https://github.com/Airsequel/SQLiteDAV#readme
 bug-reports:    https://github.com/Airsequel/SQLiteDAV/issues
