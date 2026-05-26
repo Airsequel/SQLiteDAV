@@ -11,14 +11,13 @@ import Protolude (
   Char,
   Either (..),
   Eq,
-  Show,
-  notElem,
   FilePath,
   IO,
   Int,
   Integer,
   Maybe,
   Num (fromInteger),
+  Show,
   Traversable (traverse),
   concat,
   concatMap,
@@ -34,6 +33,7 @@ import Protolude (
   mapM,
   mempty,
   not,
+  notElem,
   null,
   otherwise,
   pure,
@@ -516,7 +516,8 @@ copyOrMovePlain dbPath table src dst overwriteMb isMove =
         -- For MOVE, clear the source cell. Skipped when the move is
         -- between the same column in the same row (already prevented
         -- by the src == dst check above).
-        liftIO $ updateCell dbPath table srcRow srcCol SQLNull
+        liftIO $
+          updateCell dbPath table srcRow srcCol SQLNull
       when dstWasFilled $ throwError overwroteResponse
       pure NoContent
     (PlainRow srcRow, PlainRow dstRow) -> do
@@ -527,7 +528,8 @@ copyOrMovePlain dbPath table src dst overwriteMb isMove =
         throwError err412{errBody = "Destination row exists and Overwrite: F"}
       liftIO $ cloneRow dbPath table srcRow dstRow
       when isMove $
-        liftIO $ deleteRow dbPath table srcRow
+        liftIO $
+          deleteRow dbPath table srcRow
       when dstRowOk $ throwError overwroteResponse
       pure NoContent
     _ ->
@@ -1552,8 +1554,9 @@ rowExists dbPath tableName rowid =
     pure $ not (null rows)
 
 
--- | True when the cell at (table, rowid, col) is currently NULL.
--- Used to choose between 201 (new content) and 204 (overwrite) on PUT.
+{-| True when the cell at (table, rowid, col) is currently NULL.
+Used to choose between 201 (new content) and 204 (overwrite) on PUT.
+-}
 cellIsNull :: FilePath -> Text -> Integer -> Text -> IO Bool
 cellIsNull dbPath tableName rowid colName =
   withConnection dbPath $ \conn -> do
