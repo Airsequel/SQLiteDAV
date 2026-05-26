@@ -40,7 +40,7 @@ stack install
 
 1. Start WebDAV server:
     ```sh
-    sqlitedav --dbpath path/to/database.sqlite
+    sqlitedav path/to/database.sqlite
     ```
 2. Connect your WebDAV client to `http://localhost:1234` \
     (E.g. with macOS Finder by executing `cmd + k`)

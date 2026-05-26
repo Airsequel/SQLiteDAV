@@ -87,7 +87,7 @@ executable sqlitedav
     , http-types
     , magic
     , mime-types
-    , optparse-generic
+    , optparse-applicative
     , protolude
     , regex-tdfa
     , servant

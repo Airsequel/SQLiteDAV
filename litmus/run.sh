@@ -48,7 +48,7 @@ echo "==> Building sqlitedav"
 
 echo "==> Starting sqlitedav on port $PORT (log: $LOG)"
 ( cd "$ROOT_DIR" \
-    && stack exec -- sqlitedav --port "$PORT" --dbpath "$DB" \
+    && stack exec -- sqlitedav --port "$PORT" "$DB" \
 ) >"$LOG" 2>&1 &
 SERVER_PID=$!
 

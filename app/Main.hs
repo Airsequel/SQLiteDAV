@@ -1,67 +1,86 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module Main where
 
 import Protolude (
-  Generic,
   IO,
   Int,
   Maybe (..),
-  Show,
   Text,
   die,
-  drop,
-  fmap,
   fromMaybe,
   pure,
   putText,
   show,
-  toLower,
   ($),
   (&),
+  (<$>),
+  (<*>),
   (<>),
  )
 
 import Data.Text qualified as T
 import Network.Wai.Handler.Warp (run)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
-import Options.Generic (
-  Modifiers (fieldNameModifier),
-  ParseFields,
-  ParseRecord (parseRecord),
-  defaultModifiers,
-  getRecord,
-  parseRecordWithModifiers,
-  type (<!>) (..),
-  type (<?>) (..),
+import Options.Applicative (
+  Parser,
+  argument,
+  auto,
+  execParser,
+  fullDesc,
+  help,
+  helper,
+  info,
+  long,
+  metavar,
+  option,
+  optional,
+  progDesc,
+  str,
+  strOption,
+  (<**>),
  )
 
 import SQLiteDAV.Server (RowNameMode (..), parseRowNameMode, webDavServer)
 
 
-modifiers :: Modifiers
-modifiers =
-  defaultModifiers{fieldNameModifier = fmap toLower}
-
-
 data Options = Options
-  { port :: Maybe Int -- "Port to listen on"
-  , dbPath :: Text -- "Path to SQLite database file"
+  { port :: Maybe Int
   , rowName :: Maybe Text
-  -- ^ How to name row directories: @rowid@ (default), @pk@, or @combined@.
+  , dbPath :: Text
   }
-  deriving (Show, Generic)
 
 
-instance ParseRecord Options where
-  parseRecord = parseRecordWithModifiers modifiers
+optionsParser :: Parser Options
+optionsParser =
+  Options
+    <$> optional
+      ( option
+          auto
+          ( long "port"
+              <> metavar "INT"
+              <> help "Port to listen on (default: 1234)"
+          )
+      )
+    <*> optional
+      ( strOption
+          ( long "rowname"
+              <> metavar "TEXT"
+              <> help
+                "How to name row directories: \
+                \rowid (default), pk, or combined"
+          )
+      )
+    <*> argument str (metavar "DB_PATH" <> help "Path to SQLite database file")
 
 
 main :: IO ()
 main = do
-  (options :: Options) <- getRecord "SQLiteDAV server"
+  options <-
+    execParser $
+      info
+        (optionsParser <**> helper)
+        (fullDesc <> progDesc "SQLiteDAV server")
   let thePort = options.port & fromMaybe 1234
   rowMode <- case options.rowName of
     Nothing -> pure RowIdMode
