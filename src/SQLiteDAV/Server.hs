@@ -1881,7 +1881,7 @@ affinityFromDeclared declared
 
 {-| Interpret a PUT body for a plain cell, honoring the column's
 affinity so a TEXT/INTEGER/REAL cell doesn't end up storing a
-BLOB. Invalid UTF-8 always falls back to SQLBlob; an unparseable
+BLOB. Invalid UTF-8 always falls back to SQLBlob; an unparsable
 number on an INTEGER/REAL column falls back to SQLText so the
 user's data isn't silently turned into a binary blob.
 -}

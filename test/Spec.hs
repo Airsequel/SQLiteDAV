@@ -1347,7 +1347,7 @@ plainSpec = with mkTestApp $ do
         liftIO $ unless (cellType == "integer") $
           panic ("Expected 'integer', got: " <> cellType)
 
-      it "falls back to text for an unparseable INTEGER body" $ do
+      it "falls back to text for an unparsable INTEGER body" $ do
         put "/users/1/height.txt" "tall" `shouldRespondWith` 204
         cellType <- liftIO $ typeofCell "height" 1
         liftIO $ unless (cellType == "text") $

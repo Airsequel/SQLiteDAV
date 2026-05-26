@@ -3,7 +3,7 @@
 All notable user-facing changes to this project.
 
 
-## 2026-05-26 - 0.2
+## 2026-05-26 - 0.2.0.0
 
 - Improved WebDAV compliance based on Litmus findings.
 - Deleting a file by setting its cell to `NULL`.
@@ -18,7 +18,7 @@ All notable user-facing changes to this project.
 - `--rowname` CLI flag controls how plain-table row directories are
     named: `rowid` (default), `pk` (primary-key value), or `combined`
     (`<rowid> - <pk-value>`). Tables without a single-column PK keep
-    the rowid naming. (#1)
+    the rowid naming.
 
 
 ## 2023-10-30 - 0.1.1.0
