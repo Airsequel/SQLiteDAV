@@ -14,7 +14,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 10  # Necessary for git describe --tags
 
@@ -41,7 +41,7 @@ jobs:
           stack-no-global: true
 
       - name: Cache Stack build files
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.stack
@@ -61,7 +61,7 @@ jobs:
           stack install --ghc-options="-O2"
 
       - name: Upload ${{ runner.os }} Release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           path: ~/.local/bin/sqlitedav
           name: sqlitedav_${{ runner.os }}_${{ runner.arch }}

@@ -10,6 +10,7 @@
 
 module SQLiteDAV.Properties where
 
+import Control.Monad.Fail (fail)
 import Protolude (
   Char,
   Eq,
@@ -39,7 +40,6 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Traversable (for)
 import Database.SQLite.Simple (SQLData)
 import GHC.Generics (Generic)
-import Protolude.Error (error)
 import Servant (MimeRender (..), MimeUnrender (..), OctetStream, PlainText)
 import System.Directory (
   doesDirectoryExist,
@@ -67,11 +67,11 @@ type String = [Char]
 
 
 instance FromJSON ByteString where
-  parseJSON = error "FromJSON ByteString not implemented"
+  parseJSON _ = fail "FromJSON ByteString not implemented"
 
 
 instance FromJSON Element where
-  parseJSON = error "FromJSON Element not implemented"
+  parseJSON _ = fail "FromJSON Element not implemented"
 
 
 data ItemType = File | Folder
