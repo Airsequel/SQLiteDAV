@@ -46,11 +46,12 @@ import Protolude (
   (/=),
   (<>),
   (==),
+  (>),
   (||),
  )
 
 import Control.Exception (throw)
-import Control.Monad (replicateM, when)
+import Control.Monad (replicateM, unless, when)
 import Control.Monad.Catch (catchAll)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.ByteString (ByteString)
@@ -61,7 +62,7 @@ import Data.Char (isSpace)
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List (isInfixOf, isPrefixOf)
-import Data.Maybe (Maybe (..), catMaybes, mapMaybe)
+import Data.Maybe (Maybe (..), catMaybes, isJust, isNothing, mapMaybe)
 import Data.Text (Text, toLower)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
@@ -90,9 +91,16 @@ import Servant (
   Headers,
   NoContent (NoContent),
   Server,
+  ServerError (..),
   addHeader,
   err400,
+  err403,
   err404,
+  err405,
+  err409,
+  err412,
+  err415,
+  err502,
   errBody,
   noHeader,
   serve,
@@ -139,8 +147,8 @@ server dbPath =
     :<|> doGet dbPath
     :<|> doPut dbPath
     :<|> doDelete dbPath
-    :<|> doMove
-    :<|> doCopy
+    :<|> doMove dbPath
+    :<|> doCopy dbPath
     :<|> doLock
     :<|> doUnlock
     :<|> doOptions
@@ -157,15 +165,218 @@ doOptions urlPath = do
   pure NoContent
 
 
-doMove :: [String] -> Maybe String -> Handler NoContent
-doMove urlPath destinationMb = do
-  traceM $ show urlPath ++ " moved to " ++ show destinationMb
+{-| Strip an optional @scheme://host[:port]@ prefix and split the
+remaining path into URL-decoded segments.
+-}
+parseDestination :: String -> Maybe [String]
+parseDestination raw =
+  let
+    d = T.pack raw
+    afterScheme
+      | "http://" `T.isPrefixOf` d = T.drop 7 d
+      | "https://" `T.isPrefixOf` d = T.drop 8 d
+      | otherwise = d
+    -- After scheme: "host:port/path/..." or just "/path/...".
+    pathOnly =
+      if T.null afterScheme || T.head afterScheme == '/'
+        then afterScheme
+        else T.dropWhile (/= '/') afterScheme
+    decoded =
+      T.decodeUtf8 (urlDecode False (T.encodeUtf8 pathOnly))
+    segments =
+      decoded
+        & T.splitOn "/"
+        & fmap T.unpack
+        & filter (not . null)
+  in
+    Just segments
+
+
+{-| RFC 4918 mandates 204 No Content when COPY/MOVE replaces an
+existing resource. Servant's verb-derived status applies only when
+the handler returns normally, so we 'throwError' a success-shaped
+ServerError to override it.
+-}
+overwroteResponse :: ServerError
+overwroteResponse =
+  ServerError
+    { errHTTPCode = 204
+    , errReasonPhrase = "No Content"
+    , errBody = ""
+    , errHeaders = []
+    }
+
+
+{-| True when an Overwrite header instructs the server to overwrite.
+Default is overwrite per RFC 4918 §10.6.
+-}
+overwriteAllowed :: Maybe String -> Bool
+overwriteAllowed Nothing = True
+overwriteAllowed (Just hdr) =
+  case [c | c <- hdr, not (isSpace c)] of
+    "F" -> False
+    "f" -> False
+    _ -> True
+
+
+-- | True when a Depth header asks for a shallow operation (Depth: 0).
+isDepthZero :: Maybe String -> Bool
+isDepthZero Nothing = False
+isDepthZero (Just hdr) =
+  [c | c <- hdr, not (isSpace c)] == "0"
+
+
+{-| Resolve the destination header against the source request and
+return the table name and archive path on success. Fails with the
+appropriate WebDAV error code if the destination is malformed,
+points into a different sqlar table, or its parent does not exist.
+-}
+resolveSqlarDestination ::
+  FilePath ->
+  String ->
+  Maybe String ->
+  Handler (String, Text)
+resolveSqlarDestination dbPath srcTable destinationMb = do
+  rawDest <- case destinationMb of
+    Nothing -> throwError err400{errBody = "Missing Destination header"}
+    Just d -> pure d
+  dstSegments <- case parseDestination rawDest of
+    Just segs@(_ : _) -> pure segs
+    _ -> throwError err400{errBody = "Invalid Destination header"}
+  let
+    dstTable : dstRest = dstSegments
+  -- Cross-archive operations are not supported (RFC 4918 §9.9.4
+  -- suggests 502 Bad Gateway).
+  when (dstTable /= srcTable) $
+    throwError err502{errBody = "Cross-archive COPY/MOVE not supported"}
+  let dstArchive = SQLAR.archivePath dstRest
+  -- Empty dst path means moving onto the archive root, which is not
+  -- meaningful here.
+  when (T.null dstArchive) $
+    throwError err403{errBody = "Cannot operate on archive root"}
+  parentOk <-
+    liftIO $ SQLAR.parentExists dbPath (T.pack dstTable) dstArchive
+  unless parentOk $
+    throwError err409{errBody = "Destination parent does not exist"}
+  pure (dstTable, dstArchive)
+
+
+doMove ::
+  FilePath ->
+  [String] ->
+  Maybe String ->
+  Maybe String ->
+  Handler NoContent
+doMove dbPath urlPath destinationMb overwriteMb = do
+  let urlPathNorm = urlPath & filter (/= "")
+  case urlPathNorm of
+    tableName : rest@(_ : _) -> do
+      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+      if isSqlar
+        then doMoveSqlar dbPath tableName rest destinationMb overwriteMb
+        else do
+          traceM $ show urlPath ++ " moved to " ++ show destinationMb
+          pure NoContent
+    _ ->
+      throwError err404{errBody = "Source not found"}
+
+
+doMoveSqlar ::
+  FilePath ->
+  String ->
+  [String] ->
+  Maybe String ->
+  Maybe String ->
+  Handler NoContent
+doMoveSqlar dbPath tableName rest destinationMb overwriteMb = do
+  let srcArchive = SQLAR.archivePath rest
+  srcEntry <-
+    liftIO $ SQLAR.resolvePath dbPath (T.pack tableName) srcArchive
+  when (isNothing srcEntry) $
+    throwError err404{errBody = "Source not found"}
+  (_, dstArchive) <- resolveSqlarDestination dbPath tableName destinationMb
+  -- 412 when the destination exists and Overwrite: F.
+  dstExists <- liftIO $ SQLAR.hasPath dbPath (T.pack tableName) dstArchive
+  when (dstExists && not (overwriteAllowed overwriteMb)) $
+    throwError err412{errBody = "Destination exists and Overwrite: F"}
+  -- Per RFC 4918 §9.9.3, MOVE always behaves as Depth: infinity, and an
+  -- overwrite replaces any prior subtree at the destination.
+  when dstExists $
+    liftIO $
+      SQLAR.deleteSubtree dbPath (T.pack tableName) dstArchive
+  liftIO $ SQLAR.copySubtree dbPath (T.pack tableName) srcArchive dstArchive
+  liftIO $ SQLAR.deleteSubtree dbPath (T.pack tableName) srcArchive
+  when dstExists $ throwError overwroteResponse
   pure NoContent
 
 
-doCopy :: [String] -> Maybe String -> Handler NoContent
-doCopy urlPath destinationMb = do
-  traceM $ show urlPath ++ " copied to " ++ show destinationMb
+doCopy ::
+  FilePath ->
+  [String] ->
+  Maybe String ->
+  Maybe String ->
+  Maybe String ->
+  Handler NoContent
+doCopy dbPath urlPath destinationMb overwriteMb depthMb = do
+  let urlPathNorm = urlPath & filter (/= "")
+  case urlPathNorm of
+    tableName : rest@(_ : _) -> do
+      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+      if isSqlar
+        then
+          doCopySqlar
+            dbPath
+            tableName
+            rest
+            destinationMb
+            overwriteMb
+            depthMb
+        else do
+          traceM $ show urlPath ++ " copied to " ++ show destinationMb
+          pure NoContent
+    _ ->
+      throwError err404{errBody = "Source not found"}
+
+
+doCopySqlar ::
+  FilePath ->
+  String ->
+  [String] ->
+  Maybe String ->
+  Maybe String ->
+  Maybe String ->
+  Handler NoContent
+doCopySqlar dbPath tableName rest destinationMb overwriteMb depthMb = do
+  let srcArchive = SQLAR.archivePath rest
+  srcEntry <-
+    liftIO $ SQLAR.resolvePath dbPath (T.pack tableName) srcArchive
+  entry <- case srcEntry of
+    Nothing -> throwError err404{errBody = "Source not found"}
+    Just e -> pure e
+  (_, dstArchive) <- resolveSqlarDestination dbPath tableName destinationMb
+  dstExists <- liftIO $ SQLAR.hasPath dbPath (T.pack tableName) dstArchive
+  when (dstExists && not (overwriteAllowed overwriteMb)) $
+    throwError err412{errBody = "Destination exists and Overwrite: F"}
+  when dstExists $
+    liftIO $
+      SQLAR.deleteSubtree dbPath (T.pack tableName) dstArchive
+  case SQLAR.entryType entry of
+    Folder | isDepthZero depthMb -> do
+      -- RFC 4918 §9.8.3: Depth: 0 on a collection copies the collection
+      -- itself, not its members. Create a fresh empty folder entry.
+      now <- liftIO getPOSIXTime
+      liftIO $
+        SQLAR.insertEntry
+          dbPath
+          (T.pack tableName)
+          dstArchive
+          0o040755
+          (truncate now)
+          ByteString.empty
+    _ ->
+      liftIO $
+        SQLAR.copySubtree dbPath (T.pack tableName) srcArchive dstArchive
+  when dstExists $ throwError overwroteResponse
   pure NoContent
 
 
@@ -200,11 +411,25 @@ doPut dbPath urlPath body = do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
         then do
-          now <- liftIO getPOSIXTime
           let archive = SQLAR.archivePath rest
-              -- 0o100644 == regular file with 0644 perms
-              mode :: Integer
-              mode = 0o100644
+          -- RFC 4918 §9.7.1: PUT requires the parent collection to exist.
+          parentOk <-
+            liftIO $ SQLAR.parentExists dbPath (T.pack tableName) archive
+          unless parentOk $
+            throwError err409{errBody = "Parent collection does not exist"}
+          -- A PUT onto an existing collection is not meaningful for a file.
+          existing <-
+            liftIO $ SQLAR.resolvePath dbPath (T.pack tableName) archive
+          case existing of
+            Just e
+              | SQLAR.entryType e == Folder ->
+                  throwError err405{errBody = "Path is a collection"}
+            _ -> pure ()
+          now <- liftIO getPOSIXTime
+          let
+            -- 0o100644 == regular file with 0644 perms
+            mode :: Integer
+            mode = 0o100644
           liftIO $
             SQLAR.insertEntry
               dbPath
@@ -362,6 +587,9 @@ doDelete dbPath urlPath = do
       if isSqlar
         then do
           let archive = SQLAR.archivePath rest
+          exists <- liftIO $ SQLAR.hasPath dbPath (T.pack tableName) archive
+          unless exists $
+            throwError err404{errBody = "Path not found in archive"}
           liftIO $ SQLAR.deleteSubtree dbPath (T.pack tableName) archive
           pure NoContent
         else case rest of
@@ -387,34 +615,59 @@ doDelete dbPath urlPath = do
       throwError err404
 
 
-doMkCol :: FilePath -> [String] -> Handler NoContent
-doMkCol dbPath urlPath = do
+doMkCol ::
+  FilePath ->
+  [String] ->
+  Maybe Integer ->
+  Handler NoContent
+doMkCol dbPath urlPath contentLengthMb = do
+  -- RFC 4918 §9.3: MKCOL with a non-empty body must be rejected with 415.
+  -- We treat a positive Content-Length as the unambiguous signal of a body
+  -- (clients without bodies send 0 or omit the header).
+  case contentLengthMb of
+    Just n
+      | n > 0 ->
+          throwError err415{errBody = "MKCOL must have an empty body"}
+    _ -> pure ()
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
     tableName : rest@(_ : _) -> do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
-        then do
-          now <- liftIO getPOSIXTime
-          let archive = SQLAR.archivePath rest
-              -- 0o040755 == directory with 0755 perms
-              mode :: Integer
-              mode = 0o040755
-          liftIO $
-            SQLAR.insertEntry
-              dbPath
-              (T.pack tableName)
-              archive
-              (fromInteger mode)
-              (truncate now)
-              ByteString.empty
-          pure NoContent
+        then doMkColSqlar dbPath tableName rest
         else do
           traceM $ show urlPath ++ " collection created"
           pure NoContent
     _ -> do
       traceM $ show urlPath ++ " collection created"
       pure NoContent
+
+
+doMkColSqlar :: FilePath -> String -> [String] -> Handler NoContent
+doMkColSqlar dbPath tableName rest = do
+  let archive = SQLAR.archivePath rest
+  -- RFC 4918 §9.3.1: the parent must exist (otherwise 409).
+  parentOk <- liftIO $ SQLAR.parentExists dbPath (T.pack tableName) archive
+  unless parentOk $
+    throwError err409{errBody = "Parent collection does not exist"}
+  -- And the path itself must NOT already exist (otherwise 405).
+  existing <- liftIO $ SQLAR.resolvePath dbPath (T.pack tableName) archive
+  when (isJust existing) $
+    throwError err405{errBody = "Resource already exists"}
+  now <- liftIO getPOSIXTime
+  let
+    -- 0o040755 == directory with 0755 perms
+    mode :: Integer
+    mode = 0o040755
+  liftIO $
+    SQLAR.insertEntry
+      dbPath
+      (T.pack tableName)
+      archive
+      (fromInteger mode)
+      (truncate now)
+      ByteString.empty
+  pure NoContent
 
 
 propNameToEntry ::

@@ -52,7 +52,8 @@ instance ReflectMethod 'MOVE where
   reflectMethod _ = "MOVE"
 
 
-type Mkcol = Verb 'MKCOL 200
+-- MKCOL returns 201 Created on success per RFC 4918 §9.3.1.
+type Mkcol = Verb 'MKCOL 201
 type Propfind = Verb 'PROPFIND 207
 type Proppatch = Verb 'PROPPATCH 200
 type Lock = Verb 'LOCK 200
@@ -62,8 +63,11 @@ type Orderpatch = Verb 'ORDERPATCH 200
 
 -- type Head = Verb 'HEAD 200
 -- type Trace = Verb 'TRACE 200
-type Copy = Verb 'COPY 200
-type Move = Verb 'MOVE 200
+-- COPY/MOVE return 201 Created when the destination is new (RFC 4918
+-- §9.8.5/§9.9.4). Handlers return 204 No Content for overwrites by
+-- throwing a tailored ServerError.
+type Copy = Verb 'COPY 201
+type Move = Verb 'MOVE 201
 
 
 data AppXML = AppXML

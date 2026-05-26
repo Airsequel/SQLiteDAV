@@ -3,7 +3,7 @@
 
 module SQLiteDAV.API where
 
-import Protolude (Char, Maybe (..), Show, (<>))
+import Protolude (Char, Integer, Maybe (..), Show, (<>))
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BL
@@ -19,9 +19,8 @@ import Servant (
   OctetStream,
   PlainText,
   Proxy (..),
-  Put,
   ReqBody,
-  StdMethod (DELETE, OPTIONS),
+  StdMethod (DELETE, OPTIONS, PUT),
   Verb,
   type (:<|>),
   type (:>),
@@ -68,10 +67,13 @@ instance AllCTRender '[] NoContent where
   handleAcceptH _ _ _ = Nothing
 
 
--- TODO: Figure out why JSON is necessary for every endpoint and remove it
+-- `PlainText` content types appear throughout to avoid 406 Not
+-- Acceptable for clients that send an Accept header.
 type WebDavAPI =
   CaptureAll "segments" String
-    -- `PlainText` is necessary to not return 406 errors
+    -- MKCOL: RFC 4918 §9.3 — body must be empty, hence the Content-Length
+    -- header guard in the handler.
+    :> Header "Content-Length" Integer
     :> Mkcol '[PlainText] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Depth" Text
@@ -84,27 +86,27 @@ type WebDavAPI =
       :> Get '[OctetStream] WithContentType
     :<|> CaptureAll "segments" String
       :> ReqBody '[OctetStream] ByteString
-      -- `PlainText` is necessary to not return 406 errors
-      :> Put '[PlainText] NoContent
+      -- PUT returns 201 Created on success (RFC 4918 §9.7).
+      :> Verb 'PUT 201 '[PlainText] NoContent
     :<|> CaptureAll "segments" String
-      -- `PlainText` is necessary to not return 406 errors
       :> Delete '[PlainText] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Destination" String
-      :> Move '[] NoContent
+      :> Header "Overwrite" String
+      :> Move '[PlainText] NoContent
     :<|> CaptureAll "segments" String
       :> Header "Destination" String
-      :> Copy '[] NoContent
+      :> Header "Overwrite" String
+      :> Header "Depth" String
+      :> Copy '[PlainText] NoContent
     :<|> CaptureAll "segments" String
       :> Lock
            '[AppXML, TextXML]
            (Headers '[Header "Lock-Token" String] LockResult)
     :<|> CaptureAll "segments" String
       :> Header "Lock-Token" String
-      -- `PlainText` is necessary to not return 406 errors
       :> Unlock '[PlainText] NoContent
     :<|> CaptureAll "segments" String
-      -- `PlainText` is necessary to not return 406 errors
       :> Options '[PlainText] NoContent
 
 

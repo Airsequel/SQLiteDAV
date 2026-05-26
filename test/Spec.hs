@@ -1052,7 +1052,7 @@ sqlarSpec = with mkSqlarApp $ do
     describe "PUT" $ do
       it "stores a new file in the archive" $ do
         put "/sqlar/new.txt" "fresh content"
-          `shouldRespondWith` 200
+          `shouldRespondWith` 201
         get "/sqlar/new.txt"
           `shouldRespondWith` ResponseMatcher
             { matchStatus = 200
@@ -1062,13 +1062,19 @@ sqlarSpec = with mkSqlarApp $ do
 
       it "replaces an existing file" $ do
         put "/sqlar/readme.txt" "updated"
-          `shouldRespondWith` 200
+          `shouldRespondWith` 201
         get "/sqlar/readme.txt"
           `shouldRespondWith` ResponseMatcher
             { matchStatus = 200
             , matchHeaders = [davHeader]
             , matchBody = "updated"
             }
+
+      it "rejects PUT when the parent collection is missing" $ do
+        put "/sqlar/missing-dir/file.txt" "x" `shouldRespondWith` 409
+
+      it "rejects PUT onto a folder path" $ do
+        put "/sqlar/docs" "stuff" `shouldRespondWith` 405
 
     describe "DELETE" $ do
       it "removes a file from the archive" $ do
@@ -1080,16 +1086,156 @@ sqlarSpec = with mkSqlarApp $ do
         get "/sqlar/docs/intro.md" `shouldRespondWith` 404
         get "/sqlar/docs/guide/setup.md" `shouldRespondWith` 404
 
+      it "returns 404 when the target does not exist" $ do
+        delete "/sqlar/nope.txt" `shouldRespondWith` 404
+
     describe "MKCOL" $ do
       it "creates a folder entry" $ do
-        mkcol "/sqlar/empty-dir" `shouldRespondWith` 200
+        mkcol "/sqlar/empty-dir" `shouldRespondWith` 201
         -- After creation, a child can be PUT into it
-        put "/sqlar/empty-dir/x.txt" "x" `shouldRespondWith` 200
+        put "/sqlar/empty-dir/x.txt" "x" `shouldRespondWith` 201
         get "/sqlar/empty-dir/x.txt"
           `shouldRespondWith` ResponseMatcher
             { matchStatus = 200
             , matchHeaders = [davHeader]
             , matchBody = "x"
+            }
+
+      it "rejects MKCOL on an existing collection" $ do
+        mkcol "/sqlar/docs" `shouldRespondWith` 405
+
+      it "rejects MKCOL on an existing file" $ do
+        mkcol "/sqlar/readme.txt" `shouldRespondWith` 405
+
+      it "rejects MKCOL when the parent is missing" $ do
+        mkcol "/sqlar/missing/sub" `shouldRespondWith` 409
+
+      it "rejects MKCOL carrying a body" $ do
+        request "MKCOL" "/sqlar/with-body" [("Content-Length", "4")] "junk"
+          `shouldRespondWith` 415
+
+    describe "COPY" $ do
+      it "copies a single file" $ do
+        request
+          "COPY"
+          "/sqlar/readme.txt"
+          [("Destination", "/sqlar/readme-copy.txt")]
+          ""
+          `shouldRespondWith` 201
+        get "/sqlar/readme-copy.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "hello world"
+            }
+        -- Source still exists after a COPY
+        get "/sqlar/readme.txt" `shouldRespondWith` 200
+
+      it "copies a subtree" $ do
+        request
+          "COPY"
+          "/sqlar/docs"
+          [("Destination", "/sqlar/docs-copy")]
+          ""
+          `shouldRespondWith` 201
+        get "/sqlar/docs-copy/intro.md"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "# Intro\n"
+            }
+        get "/sqlar/docs-copy/guide/setup.md"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "# Setup\n"
+            }
+
+      it "returns 204 when overwriting an existing destination" $ do
+        request
+          "COPY"
+          "/sqlar/readme.txt"
+          [("Destination", "/sqlar/docs/intro.md")]
+          ""
+          `shouldRespondWith` 204
+        get "/sqlar/docs/intro.md"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "hello world"
+            }
+
+      it "returns 412 when destination exists and Overwrite: F" $ do
+        request
+          "COPY"
+          "/sqlar/readme.txt"
+          [ ("Destination", "/sqlar/docs/intro.md")
+          , ("Overwrite", "F")
+          ]
+          ""
+          `shouldRespondWith` 412
+
+      it "returns 409 when destination parent is missing" $ do
+        request
+          "COPY"
+          "/sqlar/readme.txt"
+          [("Destination", "/sqlar/nowhere/dest.txt")]
+          ""
+          `shouldRespondWith` 409
+
+      it "returns 404 when source does not exist" $ do
+        request
+          "COPY"
+          "/sqlar/missing.txt"
+          [("Destination", "/sqlar/dest.txt")]
+          ""
+          `shouldRespondWith` 404
+
+    describe "MOVE" $ do
+      it "moves a single file" $ do
+        request
+          "MOVE"
+          "/sqlar/readme.txt"
+          [("Destination", "/sqlar/moved.txt")]
+          ""
+          `shouldRespondWith` 201
+        get "/sqlar/moved.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "hello world"
+            }
+        -- Source is gone after a MOVE
+        get "/sqlar/readme.txt" `shouldRespondWith` 404
+
+      it "moves a subtree" $ do
+        request
+          "MOVE"
+          "/sqlar/docs"
+          [("Destination", "/sqlar/docs-moved")]
+          ""
+          `shouldRespondWith` 201
+        get "/sqlar/docs-moved/guide/setup.md"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "# Setup\n"
+            }
+        get "/sqlar/docs/intro.md" `shouldRespondWith` 404
+
+      it "returns 204 when overwriting an existing destination" $ do
+        put "/sqlar/dest.txt" "old" `shouldRespondWith` 201
+        request
+          "MOVE"
+          "/sqlar/readme.txt"
+          [("Destination", "/sqlar/dest.txt")]
+          ""
+          `shouldRespondWith` 204
+        get "/sqlar/dest.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "hello world"
             }
 
 

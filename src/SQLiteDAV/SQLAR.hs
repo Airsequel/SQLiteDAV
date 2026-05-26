@@ -25,11 +25,14 @@ module SQLiteDAV.SQLAR (
   listAt,
   lookupEntry,
   hasPath,
+  parentPath,
+  parentExists,
   resolvePath,
   decompressData,
   insertEntry,
   deleteEntry,
   deleteSubtree,
+  copySubtree,
   archivePath,
   rootEntry,
 ) where
@@ -46,6 +49,7 @@ import Protolude (
   Show,
   Text,
   fmap,
+  for_,
   fromIntegral,
   not,
   otherwise,
@@ -388,6 +392,65 @@ deleteSubtree dbPath tableName prefix =
               <> quoteIdent tableName
               <> " WHERE name = ? OR name = ? OR name LIKE ?"
     execute conn q (canon, canon <> "/", canon <> "/%")
+
+
+{-| Return the parent archive path of @path@. Empty for archive-root
+children. Trailing slashes are stripped before computing the parent.
+-}
+parentPath :: Text -> Text
+parentPath path =
+  let canon =
+        if T.isSuffixOf "/" path && T.length path > 1
+          then T.dropEnd 1 path
+          else path
+      (before, _) = T.breakOnEnd "/" canon
+  in  T.dropWhileEnd (== '/') before
+
+
+{-| True when the parent collection of @path@ exists in the archive.
+The archive root is treated as always existing.
+-}
+parentExists :: FilePath -> Text -> Text -> IO Bool
+parentExists dbPath tableName path = do
+  let parent = parentPath path
+  if T.null parent
+    then pure True
+    else hasPath dbPath tableName parent
+
+
+{-| Copy every row whose name matches @srcPath@ (or lies underneath
+it) so that the @srcPath@ prefix is replaced with @dstPath@. Rows
+are inserted with @INSERT OR REPLACE@, so an existing destination
+subtree is overwritten by the copy.
+-}
+copySubtree :: FilePath -> Text -> Text -> Text -> IO ()
+copySubtree dbPath tableName srcPath dstPath =
+  withConnection dbPath $ \conn -> do
+    let srcCanon =
+          if T.isSuffixOf "/" srcPath && T.length srcPath > 1
+            then T.dropEnd 1 srcPath
+            else srcPath
+        dstCanon =
+          if T.isSuffixOf "/" dstPath && T.length dstPath > 1
+            then T.dropEnd 1 dstPath
+            else dstPath
+        selectQ =
+          Query $
+            "SELECT name, mode, mtime, sz, data FROM "
+              <> quoteIdent tableName
+              <> " WHERE name = ? OR name = ? OR name LIKE ?"
+        insertQ =
+          Query $
+            "INSERT OR REPLACE INTO "
+              <> quoteIdent tableName
+              <> " (name, mode, mtime, sz, data) VALUES (?, ?, ?, ?, ?)"
+    rows :: [(Text, SQLData, SQLData, SQLData, SQLData)] <-
+      query conn selectQ (srcCanon, srcCanon <> "/", srcCanon <> "/%")
+    for_ rows $ \(name, modeData, mtimeData, szData, dataCol) -> do
+      let newName = case T.stripPrefix srcCanon name of
+            Just rest -> dstCanon <> rest
+            Nothing -> name
+      execute conn insertQ (newName, modeData, mtimeData, szData, dataCol)
 
 
 -- Helpers --------------------------------------------------------------------
