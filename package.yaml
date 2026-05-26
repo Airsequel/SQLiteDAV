@@ -31,6 +31,7 @@ dependencies:
   - unix
   - wai-extra
   - xml
+  - xml-conduit
   - zlib
 
 default-extensions:

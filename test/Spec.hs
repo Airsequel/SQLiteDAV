@@ -717,6 +717,25 @@ spec = with mkTestApp $ do
           , matchBody = fromString (T.unpack xmlResponse)
           }
 
+    it "returns 400 for malformed XML body" $ do
+      request
+        "PROPFIND"
+        "/"
+        [(hContentType, "application/xml"), ("Depth", "0")]
+        "<foo>"
+        `shouldRespondWith` 400
+
+    it "returns 400 when a prefix is bound to the empty namespace" $ do
+      request
+        "PROPFIND"
+        "/"
+        [(hContentType, "application/xml"), ("Depth", "0")]
+        ( "<D:propfind xmlns:D=\"DAV:\">"
+            <> "<D:prop><bar:foo xmlns:bar=\"\"/></D:prop>"
+            <> "</D:propfind>"
+        )
+        `shouldRespondWith` 400
+
     it "Prefer can combine depth-noroot and return=minimal" $ do
       let
         xmlRequest =

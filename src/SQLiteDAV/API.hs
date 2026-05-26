@@ -78,7 +78,10 @@ type WebDavAPI =
     :<|> CaptureAll "segments" String
       :> Header "Depth" Text
       :> Header "Prefer" Text
-      :> ReqBody '[AppXML, TextXML] Element
+      -- OctetStream covers requests that arrive without a Content-Type
+      -- header (servant's default media type). The body is still
+      -- validated as XML by the MimeUnrender instance.
+      :> ReqBody '[AppXML, TextXML, OctetStream] Element
       :> Propfind
            '[AppXML, TextXML]
            (Headers '[Header "Preference-Applied" String] [PropResults])
