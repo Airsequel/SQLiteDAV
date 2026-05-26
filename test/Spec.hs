@@ -72,7 +72,7 @@ import Text.Regex.TDFA
 import SQLiteDAV.API ()
 import SQLiteDAV.HTTPExtensions ()
 import SQLiteDAV.Properties ()
-import SQLiteDAV.Server (webDavServer)
+import SQLiteDAV.Server (RowNameMode (..), webDavServer)
 import SQLiteDAV.Utils (formatTimestamp)
 
 
@@ -191,7 +191,7 @@ mkTestApp :: IO _
 mkTestApp = do
   let scratchDb = "test/data_scratch.sqlite"
   copyFile "test/data.sqlite" scratchDb
-  pure $ webDavServer scratchDb
+  pure $ webDavServer RowIdMode scratchDb
 
 
 -- | Same as 'mkTestApp' but for the sqlar fixture.
@@ -199,7 +199,7 @@ mkSqlarApp :: IO _
 mkSqlarApp = do
   let scratchDb = "test/archive_scratch.sqlar"
   copyFile "test/archive.sqlar" scratchDb
-  pure $ webDavServer scratchDb
+  pure $ webDavServer RowIdMode scratchDb
 
 
 {-| Build a fixture with a single table whose payloads are large enough
@@ -217,7 +217,7 @@ mkBigBlobApp = do
     let blob = SQLBlob (BS.replicate (256 * 1024) 0x42)
     for_ [1 :: Int .. 32] $ \_ ->
       execute conn "INSERT INTO big_blobs (payload) VALUES (?)" [blob]
-  pure $ webDavServer scratchDb
+  pure $ webDavServer RowIdMode scratchDb
 
 
 put :: _ -> _ -> WaiSession st SResponse
@@ -1552,9 +1552,145 @@ bigBlobSpec = with mkBigBlobApp $ do
               "Missing href in PROPFIND response: " <> T.pack href
 
 
+{-| Fixture for PK / combined row-name tests. Creates a fresh table
+@contacts@ whose primary key is the @handle@ column, plus a row in
+the existing PK-less @users@ table to exercise the rowid fallback.
+-}
+mkRowNameApp :: RowNameMode -> IO _
+mkRowNameApp mode = do
+  let scratchDb = "test/rowname_scratch.sqlite"
+  exists <- doesFileExist scratchDb
+  unless (not exists) $ removeFile scratchDb
+  withConnection scratchDb $ \conn -> do
+    execute_
+      conn
+      "CREATE TABLE contacts (\
+      \handle TEXT PRIMARY KEY, \
+      \fullname TEXT, \
+      \notes TEXT)"
+    execute_
+      conn
+      "INSERT INTO contacts (handle, fullname, notes) \
+      \VALUES ('alice', 'Alice Adams', 'first')"
+    execute_
+      conn
+      "INSERT INTO contacts (handle, fullname, notes) \
+      \VALUES ('bob@example.com', 'Bob Brown', 'second')"
+    -- A PK-less table so we can verify the rowid fallback.
+    execute_ conn "CREATE TABLE notes (body TEXT)"
+    execute_ conn "INSERT INTO notes (body) VALUES ('hello')"
+  pure $ webDavServer mode scratchDb
+
+
+rowNamePkSpec :: Spec
+rowNamePkSpec = with (mkRowNameApp PrimaryKeyMode) $ do
+  describe "PrimaryKeyMode" $ do
+    it "lists rows by their PK value in PROPFIND" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<propfind xmlns:D=\"DAV:\">\
+            \  <prop><resourcetype/></prop>\
+            \</propfind>\
+            \"
+      response <- propfind "/contacts/" 1 (fromString (T.unpack xmlRequest))
+      let bodyTxt :: Text =
+            response & simpleBody & BL.toStrict & decodeUtf8
+      liftIO $
+        for_ ["/contacts/alice", "/contacts/bob@example.com"] $ \href ->
+          unless (T.isInfixOf (T.pack href) bodyTxt) $
+            panic $
+              "Missing href in PROPFIND response: " <> T.pack href
+
+    it "GET resolves a cell by PK value" $ do
+      get "/contacts/alice/fullname"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "Alice Adams"
+          }
+
+    it "PUT updates a cell addressed by PK value" $ do
+      put "/contacts/alice/notes.txt" "renamed"
+        `shouldRespondWith` 204
+      get "/contacts/alice/notes"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "renamed"
+          }
+
+    it "DELETE removes a row addressed by PK value" $ do
+      delete "/contacts/bob@example.com" `shouldRespondWith` 204
+      get "/contacts/bob@example.com/fullname" `shouldRespondWith` 400
+
+    it "MKCOL inserts a new row keyed by the requested PK value" $ do
+      mkcol "/contacts/carol" `shouldRespondWith` 201
+      get "/contacts/carol/fullname"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "NULL"
+          }
+
+    it "rejects MKCOL when the PK value already exists" $ do
+      mkcol "/contacts/alice" `shouldRespondWith` 405
+
+    it "falls back to rowid for PK-less tables" $ do
+      get "/notes/1/body"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "hello"
+          }
+
+
+rowNameCombinedSpec :: Spec
+rowNameCombinedSpec = with (mkRowNameApp CombinedMode) $ do
+  describe "CombinedMode" $ do
+    it "PROPFIND lists rows as '<rowid> - <pk>'" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<propfind xmlns:D=\"DAV:\">\
+            \  <prop><resourcetype/></prop>\
+            \</propfind>\
+            \"
+      response <- propfind "/contacts/" 1 (fromString (T.unpack xmlRequest))
+      let bodyTxt :: Text =
+            response & simpleBody & BL.toStrict & decodeUtf8
+      liftIO $
+        for_
+          [ "/contacts/1 - alice"
+          , "/contacts/2 - bob@example.com"
+          ]
+          $ \href ->
+            unless (T.isInfixOf (T.pack href) bodyTxt) $
+              panic $
+                "Missing href in PROPFIND response: " <> T.pack href
+
+    it "GET accepts the combined segment" $ do
+      get "/contacts/1 - alice/fullname"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "Alice Adams"
+          }
+
+    it "GET also accepts the bare rowid as a shortcut" $ do
+      get "/contacts/1/fullname"
+        `shouldRespondWith` ResponseMatcher
+          { matchStatus = 200
+          , matchHeaders = [davHeader]
+          , matchBody = "Alice Adams"
+          }
+
+
 main :: IO ()
 main = hspec $ do
   spec
   plainSpec
   sqlarSpec
   bigBlobSpec
+  rowNamePkSpec
+  rowNameCombinedSpec

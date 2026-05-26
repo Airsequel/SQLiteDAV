@@ -11,9 +11,11 @@ import Protolude (
   Maybe (..),
   Show,
   Text,
+  die,
   drop,
   fmap,
   fromMaybe,
+  pure,
   putText,
   show,
   toLower,
@@ -36,7 +38,7 @@ import Options.Generic (
   type (<?>) (..),
  )
 
-import SQLiteDAV.Server (webDavServer)
+import SQLiteDAV.Server (RowNameMode (..), parseRowNameMode, webDavServer)
 
 
 modifiers :: Modifiers
@@ -47,6 +49,8 @@ modifiers =
 data Options = Options
   { port :: Maybe Int -- "Port to listen on"
   , dbPath :: Text -- "Path to SQLite database file"
+  , rowName :: Maybe Text
+  -- ^ How to name row directories: @rowid@ (default), @pk@, or @combined@.
   }
   deriving (Show, Generic)
 
@@ -59,5 +63,16 @@ main :: IO ()
 main = do
   (options :: Options) <- getRecord "SQLiteDAV server"
   let thePort = options.port & fromMaybe 1234
+  rowMode <- case options.rowName of
+    Nothing -> pure RowIdMode
+    Just raw -> case parseRowNameMode raw of
+      Just m -> pure m
+      Nothing ->
+        die $
+          "Invalid --rowname value: "
+            <> raw
+            <> " (expected rowid, pk, or combined)"
   putText $ "Starting server on http://localhost:" <> show thePort
-  run thePort $ logStdoutDev $ webDavServer (T.unpack options.dbPath)
+  run thePort $
+    logStdoutDev $
+      webDavServer rowMode (T.unpack options.dbPath)

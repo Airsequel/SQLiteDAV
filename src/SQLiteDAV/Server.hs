@@ -145,24 +145,57 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 type String = [Char]
 
 
-server :: FilePath -> Server WebDavAPI
-server dbPath =
-  doMkCol dbPath
-    :<|> doPropFind dbPath
-    :<|> doGet dbPath
-    :<|> doPut dbPath
-    :<|> doDelete dbPath
-    :<|> doMove dbPath
-    :<|> doCopy dbPath
+{-| Controls how row directories are named in plain-table URLs.
+
+  * 'RowIdMode' uses the bare rowid (e.g. @/users/1/@). This is the
+    historical default and remains the fallback for tables without a
+    single-column @PRIMARY KEY@.
+  * 'PrimaryKeyMode' uses the value of the primary key column
+    (e.g. @/users/john@example.com/@).
+  * 'CombinedMode' uses @\<rowid\> - \<pk-value\>@
+    (e.g. @/users/1 - john@example.com/@). The rowid prefix keeps
+    paths unambiguous even when the PK value contains the separator.
+-}
+data RowNameMode
+  = RowIdMode
+  | PrimaryKeyMode
+  | CombinedMode
+  deriving (Show, Eq)
+
+
+{-| Parse a CLI string into a 'RowNameMode'. Accepts a few aliases for
+convenience but rejects everything else so typos surface as errors.
+-}
+parseRowNameMode :: Text -> Maybe RowNameMode
+parseRowNameMode raw =
+  case T.toLower (T.strip raw) of
+    "rowid" -> Just RowIdMode
+    "pk" -> Just PrimaryKeyMode
+    "primarykey" -> Just PrimaryKeyMode
+    "primary-key" -> Just PrimaryKeyMode
+    "primary_key" -> Just PrimaryKeyMode
+    "combined" -> Just CombinedMode
+    _ -> Nothing
+
+
+server :: RowNameMode -> FilePath -> Server WebDavAPI
+server mode dbPath =
+  doMkCol mode dbPath
+    :<|> doPropFind mode dbPath
+    :<|> doGet mode dbPath
+    :<|> doPut mode dbPath
+    :<|> doDelete mode dbPath
+    :<|> doMove mode dbPath
+    :<|> doCopy mode dbPath
     :<|> doLock
     :<|> doUnlock
     :<|> doOptions
 
 
-webDavServer :: FilePath -> Application
-webDavServer dbPath =
+webDavServer :: RowNameMode -> FilePath -> Application
+webDavServer mode dbPath =
   addHeaders [("Dav", "1, 2, ordered-collections")] $
-    serve webDavAPI (server dbPath)
+    serve webDavAPI (server mode dbPath)
 
 
 doOptions :: [String] -> Handler NoContent
@@ -267,19 +300,20 @@ resolveSqlarDestination dbPath srcTable destinationMb = do
 
 
 doMove ::
+  RowNameMode ->
   FilePath ->
   [String] ->
   Maybe String ->
   Maybe String ->
   Handler NoContent
-doMove dbPath urlPath destinationMb overwriteMb = do
+doMove mode dbPath urlPath destinationMb overwriteMb = do
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
     tableName : rest@(_ : _) -> do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
         then doMoveSqlar dbPath tableName rest destinationMb overwriteMb
-        else doMovePlain dbPath tableName rest destinationMb overwriteMb
+        else doMovePlain mode dbPath tableName rest destinationMb overwriteMb
     _ ->
       throwError err404{errBody = "Source not found"}
 
@@ -314,13 +348,14 @@ doMoveSqlar dbPath tableName rest destinationMb overwriteMb = do
 
 
 doCopy ::
+  RowNameMode ->
   FilePath ->
   [String] ->
   Maybe String ->
   Maybe String ->
   Maybe String ->
   Handler NoContent
-doCopy dbPath urlPath destinationMb overwriteMb depthMb = do
+doCopy mode dbPath urlPath destinationMb overwriteMb depthMb = do
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
     tableName : rest@(_ : _) -> do
@@ -335,7 +370,7 @@ doCopy dbPath urlPath destinationMb overwriteMb depthMb = do
             overwriteMb
             depthMb
         else
-          doCopyPlain dbPath tableName rest destinationMb overwriteMb
+          doCopyPlain mode dbPath tableName rest destinationMb overwriteMb
     _ ->
       throwError err404{errBody = "Source not found"}
 
@@ -394,24 +429,40 @@ data PlainTarget
   deriving (Show, Eq)
 
 
-parsePlainTarget :: [String] -> Either Text PlainTarget
-parsePlainTarget segs =
+{-| Parse a path tail into a 'PlainTarget'. Resolving the rowid is
+done in IO because PK-mode lookups require a database query; the
+returned 'Either' threads the structural validation result back to
+the caller while keeping the rowid resolution synchronous.
+-}
+parsePlainTarget ::
+  RowNameMode ->
+  FilePath ->
+  Text ->
+  [String] ->
+  IO (Either Text PlainTarget)
+parsePlainTarget mode dbPath table segs =
   case filter (/= "") segs of
-    [rowidStr] -> case readMaybe rowidStr of
-      Just r -> Right (PlainRow r)
-      Nothing -> Left "Invalid rowid in path"
-    [rowidStr, colNameWithExt] -> case readMaybe rowidStr of
-      Just r ->
-        Right (PlainCell r (T.pack (dropExtension colNameWithExt)))
-      Nothing -> Left "Invalid rowid in path"
-    _ -> Left "Path does not name a row or cell"
+    [rowidStr] -> do
+      rMb <- resolveRowid mode dbPath table rowidStr
+      pure $ case rMb of
+        Just r -> Right (PlainRow r)
+        Nothing -> Left "Invalid rowid in path"
+    [rowidStr, colNameWithExt] -> do
+      rMb <- resolveRowid mode dbPath table rowidStr
+      pure $ case rMb of
+        Just r ->
+          Right (PlainCell r (T.pack (dropExtension colNameWithExt)))
+        Nothing -> Left "Invalid rowid in path"
+    _ -> pure (Left "Path does not name a row or cell")
 
 
 resolvePlainDestination ::
+  RowNameMode ->
+  FilePath ->
   String ->
   Maybe String ->
   Handler (String, PlainTarget)
-resolvePlainDestination srcTable destinationMb = do
+resolvePlainDestination mode dbPath srcTable destinationMb = do
   rawDest <- case destinationMb of
     Nothing -> throwError err400{errBody = "Missing Destination header"}
     Just d -> pure d
@@ -422,7 +473,8 @@ resolvePlainDestination srcTable destinationMb = do
   when (dstTable /= srcTable) $
     throwError
       err502{errBody = "Cross-table COPY/MOVE not supported"}
-  target <- case parsePlainTarget dstRest of
+  parsed <- liftIO $ parsePlainTarget mode dbPath (T.pack dstTable) dstRest
+  target <- case parsed of
     Left msg -> throwError err400{errBody = BL.fromStrict (T.encodeUtf8 msg)}
     Right t -> pure t
   pure (dstTable, target)
@@ -433,17 +485,19 @@ the same table. Cross-table or shape-mismatched destinations are
 rejected.
 -}
 doCopyPlain ::
+  RowNameMode ->
   FilePath ->
   String ->
   [String] ->
   Maybe String ->
   Maybe String ->
   Handler NoContent
-doCopyPlain dbPath tableName rest destinationMb overwriteMb = do
-  src <- case parsePlainTarget rest of
+doCopyPlain mode dbPath tableName rest destinationMb overwriteMb = do
+  parsedSrc <- liftIO $ parsePlainTarget mode dbPath (T.pack tableName) rest
+  src <- case parsedSrc of
     Left msg -> throwError err400{errBody = BL.fromStrict (T.encodeUtf8 msg)}
     Right t -> pure t
-  (_, dst) <- resolvePlainDestination tableName destinationMb
+  (_, dst) <- resolvePlainDestination mode dbPath tableName destinationMb
   -- A no-op COPY onto itself is explicitly forbidden by RFC 4918.
   when (src == dst) $
     throwError err403{errBody = "Source and destination are identical"}
@@ -458,17 +512,19 @@ doCopyPlain dbPath tableName rest destinationMb overwriteMb = do
 NULL for cells or DELETEd for rows.
 -}
 doMovePlain ::
+  RowNameMode ->
   FilePath ->
   String ->
   [String] ->
   Maybe String ->
   Maybe String ->
   Handler NoContent
-doMovePlain dbPath tableName rest destinationMb overwriteMb = do
-  src <- case parsePlainTarget rest of
+doMovePlain mode dbPath tableName rest destinationMb overwriteMb = do
+  parsedSrc <- liftIO $ parsePlainTarget mode dbPath (T.pack tableName) rest
+  src <- case parsedSrc of
     Left msg -> throwError err400{errBody = BL.fromStrict (T.encodeUtf8 msg)}
     Right t -> pure t
-  (_, dst) <- resolvePlainDestination tableName destinationMb
+  (_, dst) <- resolvePlainDestination mode dbPath tableName destinationMb
   when (src == dst) $
     throwError err403{errBody = "Source and destination are identical"}
   let table = T.pack tableName
@@ -566,15 +622,20 @@ doUnlock urlPath tokenMb = do
   pure NoContent
 
 
-doPut :: FilePath -> [String] -> ByteString -> Handler NoContent
-doPut dbPath urlPath body = do
+doPut ::
+  RowNameMode ->
+  FilePath ->
+  [String] ->
+  ByteString ->
+  Handler NoContent
+doPut mode dbPath urlPath body = do
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
     tableName : rest@(_ : _) -> do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
         then doPutSqlar dbPath tableName rest body
-        else doPutPlain dbPath tableName rest body
+        else doPutPlain mode dbPath tableName rest body
     _ ->
       throwError err405{errBody = "PUT requires a file path"}
 
@@ -616,18 +677,20 @@ doPutSqlar dbPath tableName rest body = do
 because the row/column model has no analogue for nested files.
 -}
 doPutPlain ::
+  RowNameMode ->
   FilePath ->
   String ->
   [String] ->
   ByteString ->
   Handler NoContent
-doPutPlain dbPath tableName rest body = do
+doPutPlain mode dbPath tableName rest body = do
   case rest & filter (/= "") of
     [rowidStr, colNameWithExt] -> do
       tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
       unless tableOk $
         throwError err404{errBody = "Table does not exist"}
-      rowid <- case readMaybe rowidStr of
+      rMb <- liftIO $ resolveRowid mode dbPath (T.pack tableName) rowidStr
+      rowid <- case rMb of
         Nothing -> throwError err400{errBody = "Invalid rowid"}
         Just r -> pure r
       let colName = T.pack (dropExtension colNameWithExt)
@@ -680,8 +743,12 @@ dataToFileExt sqlData =
     SQLNull -> pure ".txt"
 
 
-doGet :: FilePath -> [String] -> Handler WithContentType
-doGet dbPath urlPath = do
+doGet ::
+  RowNameMode ->
+  FilePath ->
+  [String] ->
+  Handler WithContentType
+doGet mode dbPath urlPath = do
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
     tableName : rest@(_ : _) -> do
@@ -701,15 +768,22 @@ doGet dbPath urlPath = do
                 liftIO $ columnExists dbPath (T.pack tableName) colName
               unless colOk $
                 throwError err404{errBody = "Column not found"}
-              doGetCell dbPath tableName rowidStr colNameWithExt
+              doGetCell mode dbPath tableName rowidStr colNameWithExt
             _ -> throwError err404
     _ ->
       throwError err404
 
 
-doGetCell :: FilePath -> String -> String -> String -> Handler WithContentType
-doGetCell dbPath tableName rowidStr colNameWithExt =
-  case readMaybe rowidStr of
+doGetCell ::
+  RowNameMode ->
+  FilePath ->
+  String ->
+  String ->
+  String ->
+  Handler WithContentType
+doGetCell mode dbPath tableName rowidStr colNameWithExt = do
+  rMb <- liftIO $ resolveRowid mode dbPath (T.pack tableName) rowidStr
+  case rMb of
     Nothing ->
       throwError err400{errBody = "Invalid rowid"}
     Just (rowid :: Integer) -> do
@@ -758,11 +832,16 @@ doGetSqlar dbPath tableName rest = do
           }
 
 
-getCellSize :: FilePath -> [String] -> Handler Integer
-getCellSize dbPath urlPath = do
+getCellSize ::
+  RowNameMode ->
+  FilePath ->
+  [String] ->
+  Handler Integer
+getCellSize mode dbPath urlPath = do
   case urlPath of
-    tableName : rowidStr : colNameWithExt : _rest ->
-      case readMaybe rowidStr of
+    tableName : rowidStr : colNameWithExt : _rest -> do
+      rMb <- liftIO $ resolveRowid mode dbPath (T.pack tableName) rowidStr
+      case rMb of
         Nothing ->
           throwError err400{errBody = "Invalid rowid"}
         Just (rowid :: Integer) -> do
@@ -796,15 +875,19 @@ getCellSize dbPath urlPath = do
       pure 0
 
 
-doDelete :: FilePath -> [String] -> Handler NoContent
-doDelete dbPath urlPath = do
+doDelete ::
+  RowNameMode ->
+  FilePath ->
+  [String] ->
+  Handler NoContent
+doDelete mode dbPath urlPath = do
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
     tableName : rest -> do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
         then doDeleteSqlar dbPath tableName rest
-        else doDeletePlain dbPath tableName rest
+        else doDeletePlain mode dbPath tableName rest
     _ ->
       throwError err403{errBody = "Cannot DELETE the database root"}
 
@@ -834,8 +917,13 @@ doDeleteSqlar dbPath tableName rest = do
   * two segments (@/table/rowid@) deletes the row;
   * three segments (@/table/rowid/col@) sets the cell to NULL.
 -}
-doDeletePlain :: FilePath -> String -> [String] -> Handler NoContent
-doDeletePlain dbPath tableName rest =
+doDeletePlain ::
+  RowNameMode ->
+  FilePath ->
+  String ->
+  [String] ->
+  Handler NoContent
+doDeletePlain mode dbPath tableName rest =
   case rest & filter (/= "") of
     [] -> do
       tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
@@ -847,7 +935,8 @@ doDeletePlain dbPath tableName rest =
       tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
       unless tableOk $
         throwError err404{errBody = "Table does not exist"}
-      rowid <- case readMaybe rowidStr of
+      rMb <- liftIO $ resolveRowid mode dbPath (T.pack tableName) rowidStr
+      rowid <- case rMb of
         Nothing -> throwError err400{errBody = "Invalid rowid"}
         Just r -> pure r
       rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
@@ -863,7 +952,8 @@ doDeletePlain dbPath tableName rest =
       colOk <- liftIO $ columnExists dbPath (T.pack tableName) colName
       unless colOk $
         throwError err404{errBody = "Column does not exist"}
-      rowid <- case readMaybe rowidStr of
+      rMb <- liftIO $ resolveRowid mode dbPath (T.pack tableName) rowidStr
+      rowid <- case rMb of
         Nothing -> throwError err400{errBody = "Invalid rowid"}
         Just r -> pure r
       rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
@@ -877,11 +967,12 @@ doDeletePlain dbPath tableName rest =
 
 
 doMkCol ::
+  RowNameMode ->
   FilePath ->
   [String] ->
   Maybe Integer ->
   Handler NoContent
-doMkCol dbPath urlPath contentLengthMb = do
+doMkCol mode dbPath urlPath contentLengthMb = do
   -- RFC 4918 §9.3: MKCOL with a non-empty body must be rejected with 415.
   -- We treat a positive Content-Length as the unambiguous signal of a body
   -- (clients without bodies send 0 or omit the header).
@@ -910,7 +1001,7 @@ doMkCol dbPath urlPath contentLengthMb = do
           isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
           if isSqlar
             then doMkColSqlar dbPath tableName rest
-            else doMkColPlain dbPath tableName rest
+            else doMkColPlain mode dbPath tableName rest
 
 
 doMkColSqlar :: FilePath -> String -> [String] -> Handler NoContent
@@ -950,46 +1041,91 @@ doMkColSqlar dbPath tableName rest = do
 exists) or inserts a row at a requested rowid. Cell-level MKCOL is
 refused because cells aren't collections.
 -}
-doMkColPlain :: FilePath -> String -> [String] -> Handler NoContent
-doMkColPlain dbPath tableName rest =
+doMkColPlain ::
+  RowNameMode ->
+  FilePath ->
+  String ->
+  [String] ->
+  Handler NoContent
+doMkColPlain mode dbPath tableName rest =
   case rest & filter (/= "") of
     [] ->
       throwError err405{errBody = "Table already exists"}
-    [rowidStr] -> do
-      rowid <- case readMaybe rowidStr of
-        Nothing -> throwError err400{errBody = "Invalid rowid"}
-        Just r -> pure r
-      rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
-      when rowOk $
-        throwError err405{errBody = "Row already exists"}
-      inserted <- liftIO $ insertEmptyRow dbPath (T.pack tableName) rowid
-      unless inserted $
-        throwError
-          err409
-            { errBody =
-                "NOT NULL constraint blocks the insert; "
-                  <> "use PUT to populate columns first"
-            }
-      pure NoContent
+    [seg] -> do
+      pkMb <- liftIO $ singlePkColumn dbPath (T.pack tableName)
+      case (mode, pkMb) of
+        (PrimaryKeyMode, Just pkCol) ->
+          -- Insert a row keyed by the requested PK value.
+          mkColByPk dbPath (T.pack tableName) pkCol (T.pack seg)
+        _ -> do
+          rowid <- case mode of
+            CombinedMode ->
+              let
+                segTxt = T.pack seg
+                (pref, restTxt) = T.breakOn " - " segTxt
+                rowidPart =
+                  if T.null restTxt
+                    then segTxt
+                    else pref
+              in
+                case readMaybe (T.unpack rowidPart) of
+                  Nothing -> throwError err400{errBody = "Invalid rowid"}
+                  Just r -> pure r
+            _ -> case readMaybe seg of
+              Nothing -> throwError err400{errBody = "Invalid rowid"}
+              Just r -> pure r
+          rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
+          when rowOk $
+            throwError err405{errBody = "Row already exists"}
+          inserted <- liftIO $ insertEmptyRow dbPath (T.pack tableName) rowid
+          unless inserted $
+            throwError
+              err409
+                { errBody =
+                    "NOT NULL constraint blocks the insert; "
+                      <> "use PUT to populate columns first"
+                }
+          pure NoContent
     _ ->
       throwError
         err403{errBody = "MKCOL is not defined for cells in plain tables"}
 
 
+{-| Insert a fresh row keyed by the requested primary-key value. Used
+exclusively in 'PrimaryKeyMode' so MKCOL targets are addressable by
+the same URL segment that names the row in PROPFIND listings.
+-}
+mkColByPk :: FilePath -> Text -> Text -> Text -> Handler NoContent
+mkColByPk dbPath tableName pkCol pkValue = do
+  existing <- liftIO $ findRowidByPk dbPath tableName pkCol pkValue
+  when (isJust existing) $
+    throwError err405{errBody = "Row already exists"}
+  inserted <- liftIO $ insertRowByPk dbPath tableName pkCol pkValue
+  unless inserted $
+    throwError
+      err409
+        { errBody =
+            "Insert blocked by NOT NULL constraint; "
+              <> "use PUT to populate columns first"
+        }
+  pure NoContent
+
+
 propNameToEntry ::
+  RowNameMode ->
   FilePath ->
   [String] ->
   ItemType ->
   String ->
   Handler (Maybe (String, String))
-propNameToEntry dbPath urlPath itemType propName = do
+propNameToEntry mode dbPath urlPath itemType propName = do
   let urlPathStr = "/" ++ intercalate "/" urlPath
 
   ( case propName of
       "creationdate" -> pure Nothing -- Unix doesn't store creation date
       "getcontentlength" ->
         if itemType == File
-          then getCellSize dbPath urlPath <&> Just . show
+          then getCellSize mode dbPath urlPath <&> Just . show
           else pure Nothing
       "getlastmodified" -> do
         lastModified <- liftIO $ getModificationTime dbPath
@@ -1072,16 +1208,17 @@ ignoreHiddenFiles resourceName =
 
 
 getPropsForTable ::
+  RowNameMode ->
   FilePath ->
   [String] ->
   Maybe Text ->
   [String] ->
   String ->
   Handler [PropResults]
-getPropsForTable dbPath urlPath depth propNames tableName = do
+getPropsForTable mode dbPath urlPath depth propNames tableName = do
   props <-
     propNames
-      & mapM (propNameToEntry dbPath urlPath Folder)
+      & mapM (propNameToEntry mode dbPath urlPath Folder)
       <&> catMaybes
 
   let
@@ -1097,13 +1234,16 @@ getPropsForTable dbPath urlPath depth propNames tableName = do
   ignoreHiddenFiles tableName
 
   rowids <- liftIO $ listRowids dbPath (T.pack tableName)
+  rowSegments <-
+    liftIO $
+      mapM (formatRowSegment mode dbPath (T.pack tableName)) rowids
 
   let
     ioTableRows =
-      rowids
-        <&> ( \rowid ->
+      rowSegments
+        <&> ( \seg ->
                 PropResults
-                  { propName = tableName ++ "/" ++ show rowid
+                  { propName = tableName ++ "/" ++ seg
                   , itemType = Folder
                   , props
                   , propMissing = propNames & keepMissingNames Folder
@@ -1118,6 +1258,7 @@ getPropsForTable dbPath urlPath depth propNames tableName = do
 
 
 getPropsForRow ::
+  RowNameMode ->
   FilePath ->
   [String] ->
   Maybe Text ->
@@ -1125,10 +1266,10 @@ getPropsForRow ::
   String ->
   Maybe Integer ->
   Handler [PropResults]
-getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
+getPropsForRow mode dbPath urlPath depth propNames tableName rowidMb = do
   rootProps <-
     propNames
-      & mapM (propNameToEntry dbPath urlPath Folder)
+      & mapM (propNameToEntry mode dbPath urlPath Folder)
       <&> catMaybes
 
   let
@@ -1136,9 +1277,13 @@ getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
       Nothing -> throw $ err404{errBody = "Row not found"}
       Just rowidInteger -> rowidInteger
 
+  rowSegment <-
+    liftIO $ formatRowSegment mode dbPath (T.pack tableName) rowid
+
+  let
     rootPropResult =
       PropResults
-        { propName = tableName <> "/" <> show rowid
+        { propName = tableName <> "/" <> rowSegment
         , itemType = Folder
         , props = rootProps
         , propMissing = propNames & keepMissingNames Folder
@@ -1161,14 +1306,14 @@ getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
             getPropName tableName =
               tableName
                 ++ "/"
-                ++ show rowid
+                ++ rowSegment
                 ++ "/"
                 ++ colName
                 ++ fileExt
 
           props <-
             propNames
-              & mapM (propNameToEntry dbPath (urlPath ++ [colName]) File)
+              & mapM (propNameToEntry mode dbPath (urlPath ++ [colName]) File)
               <&> catMaybes
 
           pure $
@@ -1189,6 +1334,7 @@ getPropsForRow dbPath urlPath depth propNames tableName rowidMb = do
 
 
 getPropsForCell ::
+  RowNameMode ->
   FilePath ->
   [String] ->
   [String] ->
@@ -1196,10 +1342,10 @@ getPropsForCell ::
   Maybe Integer ->
   String ->
   Handler [PropResults]
-getPropsForCell dbPath urlPath propNames tableName rowidMb colNameWithExt = do
+getPropsForCell mode dbPath urlPath propNames tableName rowidMb colNameWithExt = do
   props <-
     propNames
-      & mapM (propNameToEntry dbPath urlPath File)
+      & mapM (propNameToEntry mode dbPath urlPath File)
       <&> catMaybes
 
   let
@@ -1208,9 +1354,13 @@ getPropsForCell dbPath urlPath propNames tableName rowidMb colNameWithExt = do
       Nothing -> throw $ err404{errBody = "Row not found"}
       Just rowidInteger -> rowidInteger
 
+  rowSegment <-
+    liftIO $ formatRowSegment mode dbPath (T.pack tableName) rowid
+
+  let
     rootPropResult =
       PropResults
-        { propName = tableName <> "/" <> show rowid <> "/" <> colName
+        { propName = tableName <> "/" <> rowSegment <> "/" <> colName
         , itemType = File
         , props
         , propMissing = propNames & keepMissingNames File
@@ -1399,6 +1549,7 @@ preferenceAppliedHeader prefs =
 
 
 doPropFind ::
+  RowNameMode ->
   String ->
   [String] ->
   Maybe Text ->
@@ -1406,7 +1557,7 @@ doPropFind ::
   Element ->
   Handler
     (Headers '[Header "Preference-Applied" String] [PropResults])
-doPropFind dbPath urlPath depth preferMb doc = do
+doPropFind mode dbPath urlPath depth preferMb doc = do
   let
     urlPathNorm = urlPath & filter (/= "")
     propNames =
@@ -1421,7 +1572,7 @@ doPropFind dbPath urlPath depth preferMb doc = do
 
       itemProps <-
         propNames
-          & mapM (propNameToEntry dbPath urlPathNorm itemType)
+          & mapM (propNameToEntry mode dbPath urlPathNorm itemType)
           <&> catMaybes
 
       let
@@ -1440,7 +1591,7 @@ doPropFind dbPath urlPath depth preferMb doc = do
 
       folderProps <-
         propNames
-          & mapM (propNameToEntry dbPath urlPathNorm Folder)
+          & mapM (propNameToEntry mode dbPath urlPathNorm Folder)
           <&> catMaybes
 
       pure $
@@ -1464,22 +1615,28 @@ doPropFind dbPath urlPath depth preferMb doc = do
         then getPropsForSqlar dbPath depth propNames tableName restPath
         else case restPath of
           [] ->
-            getPropsForTable dbPath urlPathNorm depth propNames tableName
-          [rowName] ->
+            getPropsForTable mode dbPath urlPathNorm depth propNames tableName
+          [rowName] -> do
+            rowidMb <-
+              liftIO $ resolveRowid mode dbPath (T.pack tableName) rowName
             getPropsForRow
+              mode
               dbPath
               urlPathNorm
               depth
               propNames
               tableName
-              (readMaybe rowName)
-          rowName : colNameWithExt : _rest ->
+              rowidMb
+          rowName : colNameWithExt : _rest -> do
+            rowidMb <-
+              liftIO $ resolveRowid mode dbPath (T.pack tableName) rowName
             getPropsForCell
+              mode
               dbPath
               urlPathNorm
               propNames
               tableName
-              (readMaybe rowName)
+              rowidMb
               colNameWithExt
 
   let (appliedPrefs, filtered) = applyPreferences prefs depth results
@@ -1504,6 +1661,150 @@ quoteKeyword keyword =
 
 -- Plain-table helpers --------------------------------------------------------
 -- These power the non-sqlar WebDAV code paths.
+
+{-| The single-column primary key of @tableName@, if exactly one such
+column exists. Returns 'Nothing' for tables with no PK or with a
+composite PK; callers fall back to rowid-based naming in those
+cases so the URL stays unambiguous.
+-}
+singlePkColumn :: FilePath -> Text -> IO (Maybe Text)
+singlePkColumn dbPath tableName =
+  withConnection dbPath $ \conn -> do
+    rows :: [Only Text] <-
+      query
+        conn
+        "SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk"
+        (Only tableName)
+    pure $ case rows of
+      [Only c] -> Just c
+      _ -> Nothing
+
+
+-- | Render a SQLData value as the URL-segment representation of a PK.
+pkValueText :: SQLData -> Text
+pkValueText sqlData = case sqlData of
+  SQLText t -> t
+  SQLInteger i -> show i
+  SQLFloat f -> show f
+  SQLBlob _ -> ""
+  SQLNull -> ""
+
+
+-- | Read the PK column value for a given rowid.
+lookupPkValue ::
+  FilePath ->
+  Text ->
+  Text ->
+  Integer ->
+  IO (Maybe Text)
+lookupPkValue dbPath tableName pkCol rowid =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "SELECT "
+              <> quoteKeyword pkCol
+              <> " FROM "
+              <> quoteKeyword tableName
+              <> " WHERE rowid = ? LIMIT 1"
+    rows :: [Only SQLData] <- query conn q (Only rowid)
+    pure $ case rows of
+      [Only v] -> Just (pkValueText v)
+      _ -> Nothing
+
+
+-- | Find the rowid of the row whose PK column equals @pkValue@.
+findRowidByPk ::
+  FilePath ->
+  Text ->
+  Text ->
+  Text ->
+  IO (Maybe Integer)
+findRowidByPk dbPath tableName pkCol pkValue =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "SELECT rowid FROM "
+              <> quoteKeyword tableName
+              <> " WHERE "
+              <> quoteKeyword pkCol
+              <> " = ? LIMIT 1"
+    rows :: [Only Integer] <- query conn q (Only pkValue)
+    pure $ case rows of
+      [Only r] -> Just r
+      _ -> Nothing
+
+
+{-| Format a URL segment that names a specific row. Falls back to the
+plain rowid when the table has no single-column PK or when the
+rowid is missing from the table, so unrelated tables stay routable.
+-}
+formatRowSegment ::
+  RowNameMode ->
+  FilePath ->
+  Text ->
+  Integer ->
+  IO String
+formatRowSegment mode dbPath tableName rowid =
+  case mode of
+    RowIdMode -> pure (show rowid)
+    PrimaryKeyMode -> do
+      pkMb <- singlePkColumn dbPath tableName
+      case pkMb of
+        Nothing -> pure (show rowid)
+        Just pkCol -> do
+          valMb <- lookupPkValue dbPath tableName pkCol rowid
+          pure $ case valMb of
+            Just v | not (T.null v) -> T.unpack v
+            _ -> show rowid
+    CombinedMode -> do
+      pkMb <- singlePkColumn dbPath tableName
+      case pkMb of
+        Nothing -> pure (show rowid)
+        Just pkCol -> do
+          valMb <- lookupPkValue dbPath tableName pkCol rowid
+          pure $ case valMb of
+            Just v
+              | not (T.null v) ->
+                  show rowid <> " - " <> T.unpack v
+            _ -> show rowid
+
+
+{-| Resolve a URL row segment to an integer rowid. Handles all three
+naming modes:
+
+  * @RowIdMode@ — the segment is parsed as an integer.
+  * @CombinedMode@ — the rowid is parsed from the prefix preceding
+    @" - "@. The trailing PK value is ignored, since the rowid is
+    already enough to identify the row.
+  * @PrimaryKeyMode@ — the table's PK column is queried for a row
+    whose PK value matches the segment. Tables without a single-column
+    PK fall back to integer parsing so they remain reachable.
+-}
+resolveRowid ::
+  RowNameMode ->
+  FilePath ->
+  Text ->
+  String ->
+  IO (Maybe Integer)
+resolveRowid mode dbPath tableName seg =
+  case mode of
+    RowIdMode -> pure (readMaybe seg)
+    CombinedMode ->
+      let
+        segTxt = T.pack seg
+        (pref, rest) = T.breakOn " - " segTxt
+        rowidPart =
+          if T.null rest
+            then segTxt
+            else pref
+      in
+        pure (readMaybe (T.unpack rowidPart))
+    PrimaryKeyMode -> do
+      pkMb <- singlePkColumn dbPath tableName
+      case pkMb of
+        Nothing -> pure (readMaybe seg)
+        Just pkCol -> findRowidByPk dbPath tableName pkCol (T.pack seg)
+
 
 tableExists :: FilePath -> Text -> IO Bool
 tableExists dbPath name =
@@ -1732,6 +2033,26 @@ insertEmptyRow dbPath tableName rowid =
               <> " (rowid) VALUES (?)"
     catchAll
       (do execute conn q (Only rowid); pure True)
+      (\_ -> pure False)
+
+
+{-| Insert a row whose primary-key column is set to @pkValue@ (all
+other columns NULL). Mirrors 'insertEmptyRow' but keyed by an
+arbitrary PK column so PK-mode MKCOL can create rows reachable by
+the same URL segment that names them.
+-}
+insertRowByPk :: FilePath -> Text -> Text -> Text -> IO Bool
+insertRowByPk dbPath tableName pkCol pkValue =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "INSERT INTO "
+              <> quoteKeyword tableName
+              <> " ("
+              <> quoteKeyword pkCol
+              <> ") VALUES (?)"
+    catchAll
+      (do execute conn q (Only pkValue); pure True)
       (\_ -> pure False)
 
 

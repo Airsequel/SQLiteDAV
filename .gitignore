@@ -6,3 +6,4 @@ test/data_scratch.sqlite*
 test/archive_scratch.sqlar*
 test/big_blobs_scratch.sqlite*
 test/litmus_scratch.sqlar*
+test/rowname_scratch.sqlite*
