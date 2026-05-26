@@ -25,10 +25,14 @@ jobs:
           git fetch --tags --force
 
       - if: ${{startsWith(matrix.os, 'ubuntu')}}
-        name: Install deps
+        name: Install deps (Ubuntu)
         run: |
           sudo apt-get update -y && \
           sudo apt-get install -y libmagic-dev
+
+      - if: ${{startsWith(matrix.os, 'macos')}}
+        name: Install deps (macOS)
+        run: brew install libmagic
 
       - name: Setup Stack
         uses: haskell-actions/setup@v2
