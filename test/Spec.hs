@@ -1258,7 +1258,195 @@ sqlarSpec = with mkSqlarApp $ do
             }
 
 
+plainSpec :: Spec
+plainSpec = with mkTestApp $ do
+  describe "Plain SQLite mode" $ do
+    describe "PUT" $ do
+      it "updates an existing cell and reports 204" $ do
+        put "/users/1/name.txt" "Updated"
+          `shouldRespondWith` 204
+        get "/users/1/name"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "Updated"
+            }
+
+      it "returns 201 when filling a previously NULL cell" $ do
+        delete "/users/2/email" `shouldRespondWith` 204
+        put "/users/2/email.txt" "ada@example.com"
+          `shouldRespondWith` 201
+
+      it "returns 404 for an unknown column" $ do
+        put "/users/1/nonsense.txt" "x" `shouldRespondWith` 404
+
+      it "returns 409 for a missing row" $ do
+        put "/users/999/name.txt" "x" `shouldRespondWith` 409
+
+      it "returns 404 for an unknown table" $ do
+        put "/no_such_table/1/name.txt" "x" `shouldRespondWith` 404
+
+      it "returns 405 when targeting a row instead of a cell" $ do
+        put "/users/1" "x" `shouldRespondWith` 405
+
+    describe "DELETE" $ do
+      it "404s on a missing cell column" $ do
+        delete "/users/1/nonsense" `shouldRespondWith` 404
+
+      it "404s on a missing row" $ do
+        delete "/users/999" `shouldRespondWith` 404
+
+      it "deletes a row" $ do
+        delete "/users/3" `shouldRespondWith` 204
+        get "/users/3/name" `shouldRespondWith` 404
+
+      it "drops a table" $ do
+        delete "/users" `shouldRespondWith` 204
+        get "/users/1/name" `shouldRespondWith` 404
+
+      it "refuses to delete the database root" $ do
+        delete "/" `shouldRespondWith` 403
+
+    describe "MKCOL" $ do
+      it "creates a new (sqlar-shaped) table at the root" $ do
+        mkcol "/fresh_table" `shouldRespondWith` 201
+        -- The new table behaves as a sqlar archive.
+        put "/fresh_table/note.txt" "hello"
+          `shouldRespondWith` 201
+        get "/fresh_table/note.txt"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "hello"
+            }
+
+      it "rejects MKCOL on an existing table with 405" $ do
+        mkcol "/users" `shouldRespondWith` 405
+
+      it "inserts a row when MKCOL targets a missing rowid" $ do
+        mkcol "/users/777" `shouldRespondWith` 201
+        -- All other columns are NULL on the freshly inserted row.
+        get "/users/777/name" `shouldRespondWith` 200
+
+      it "returns 405 when the rowid already exists" $ do
+        mkcol "/users/1" `shouldRespondWith` 405
+
+      it "returns 403 when MKCOL points at a cell" $ do
+        mkcol "/users/1/name" `shouldRespondWith` 403
+
+      it "rejects MKCOL with a body" $ do
+        request "MKCOL" "/users/888" [("Content-Length", "1")] "x"
+          `shouldRespondWith` 415
+
+    describe "COPY" $ do
+      it "copies a cell to another column of the same row" $ do
+        request
+          "COPY"
+          "/users/1/name.txt"
+          [("Destination", "/users/1/email.txt")]
+          ""
+          `shouldRespondWith` 204
+        get "/users/1/email"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "John"
+            }
+        -- Source still has its value
+        get "/users/1/name"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "John"
+            }
+
+      it "clones a row to a new rowid" $ do
+        request
+          "COPY"
+          "/users/1"
+          [("Destination", "/users/500")]
+          ""
+          `shouldRespondWith` 201
+        get "/users/500/name"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "John"
+            }
+
+      it "returns 412 when the destination cell is non-NULL and Overwrite: F" $ do
+        request
+          "COPY"
+          "/users/1/name.txt"
+          [ ("Destination", "/users/2/name.txt")
+          , ("Overwrite", "F")
+          ]
+          ""
+          `shouldRespondWith` 412
+
+      it "returns 502 for cross-table COPY" $ do
+        request
+          "COPY"
+          "/users/1"
+          [("Destination", "/other/1")]
+          ""
+          `shouldRespondWith` 502
+
+      it "returns 403 when source and destination are identical" $ do
+        request
+          "COPY"
+          "/users/1/name.txt"
+          [("Destination", "/users/1/name.txt")]
+          ""
+          `shouldRespondWith` 403
+
+      it "rejects mismatched shapes (cell -> row)" $ do
+        request
+          "COPY"
+          "/users/1/name.txt"
+          [("Destination", "/users/2")]
+          ""
+          `shouldRespondWith` 403
+
+    describe "MOVE" $ do
+      it "moves a cell value and nulls the source" $ do
+        request
+          "MOVE"
+          "/users/1/name.txt"
+          [("Destination", "/users/1/email.txt")]
+          ""
+          `shouldRespondWith` 204
+        get "/users/1/email"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "John"
+            }
+        get "/users/1/name"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "NULL"
+            }
+
+      it "moves a row and deletes the source" $ do
+        request
+          "MOVE"
+          "/users/1"
+          [("Destination", "/users/600")]
+          ""
+          `shouldRespondWith` 201
+        get "/users/600/name"
+          `shouldRespondWith` ResponseMatcher
+            { matchStatus = 200
+            , matchHeaders = [davHeader]
+            , matchBody = "John"
+            }
+        get "/users/1/name" `shouldRespondWith` 404
+
+
 main :: IO ()
 main = hspec $ do
   spec
+  plainSpec
   sqlarSpec

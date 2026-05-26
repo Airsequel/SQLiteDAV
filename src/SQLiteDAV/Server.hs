@@ -9,8 +9,13 @@ module SQLiteDAV.Server where
 import Protolude (
   Bool (False, True),
   Char,
+  Either (..),
+  Eq,
+  Show,
+  notElem,
   FilePath,
   IO,
+  Int,
   Integer,
   Maybe,
   Num (fromInteger),
@@ -274,9 +279,7 @@ doMove dbPath urlPath destinationMb overwriteMb = do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
         then doMoveSqlar dbPath tableName rest destinationMb overwriteMb
-        else do
-          traceM $ show urlPath ++ " moved to " ++ show destinationMb
-          pure NoContent
+        else doMovePlain dbPath tableName rest destinationMb overwriteMb
     _ ->
       throwError err404{errBody = "Source not found"}
 
@@ -331,9 +334,8 @@ doCopy dbPath urlPath destinationMb overwriteMb depthMb = do
             destinationMb
             overwriteMb
             depthMb
-        else do
-          traceM $ show urlPath ++ " copied to " ++ show destinationMb
-          pure NoContent
+        else
+          doCopyPlain dbPath tableName rest destinationMb overwriteMb
     _ ->
       throwError err404{errBody = "Source not found"}
 
@@ -380,6 +382,165 @@ doCopySqlar dbPath tableName rest destinationMb overwriteMb depthMb = do
   pure NoContent
 
 
+{-| Parse the source and destination into a 'PlainTarget' for COPY/MOVE.
+
+The same plain-mode COPY/MOVE rules apply to both methods: source
+and destination must live in the same table and have the same
+"shape" (cell-to-cell or row-to-row).
+-}
+data PlainTarget
+  = PlainCell {plainRowid :: Integer, plainColumn :: Text}
+  | PlainRow {plainRowid :: Integer}
+  deriving (Show, Eq)
+
+
+parsePlainTarget :: [String] -> Either Text PlainTarget
+parsePlainTarget segs =
+  case filter (/= "") segs of
+    [rowidStr] -> case readMaybe rowidStr of
+      Just r -> Right (PlainRow r)
+      Nothing -> Left "Invalid rowid in path"
+    [rowidStr, colNameWithExt] -> case readMaybe rowidStr of
+      Just r ->
+        Right (PlainCell r (T.pack (dropExtension colNameWithExt)))
+      Nothing -> Left "Invalid rowid in path"
+    _ -> Left "Path does not name a row or cell"
+
+
+resolvePlainDestination ::
+  String ->
+  Maybe String ->
+  Handler (String, PlainTarget)
+resolvePlainDestination srcTable destinationMb = do
+  rawDest <- case destinationMb of
+    Nothing -> throwError err400{errBody = "Missing Destination header"}
+    Just d -> pure d
+  dstSegments <- case parseDestination rawDest of
+    Just segs@(_ : _) -> pure segs
+    _ -> throwError err400{errBody = "Invalid Destination header"}
+  let dstTable : dstRest = dstSegments
+  when (dstTable /= srcTable) $
+    throwError
+      err502{errBody = "Cross-table COPY/MOVE not supported"}
+  target <- case parsePlainTarget dstRest of
+    Left msg -> throwError err400{errBody = BL.fromStrict (T.encodeUtf8 msg)}
+    Right t -> pure t
+  pure (dstTable, target)
+
+
+{-| COPY in plain mode supports cell→cell and row→row copies inside
+the same table. Cross-table or shape-mismatched destinations are
+rejected.
+-}
+doCopyPlain ::
+  FilePath ->
+  String ->
+  [String] ->
+  Maybe String ->
+  Maybe String ->
+  Handler NoContent
+doCopyPlain dbPath tableName rest destinationMb overwriteMb = do
+  src <- case parsePlainTarget rest of
+    Left msg -> throwError err400{errBody = BL.fromStrict (T.encodeUtf8 msg)}
+    Right t -> pure t
+  (_, dst) <- resolvePlainDestination tableName destinationMb
+  -- A no-op COPY onto itself is explicitly forbidden by RFC 4918.
+  when (src == dst) $
+    throwError err403{errBody = "Source and destination are identical"}
+  let table = T.pack tableName
+  tableOk <- liftIO $ tableExists dbPath table
+  unless tableOk $
+    throwError err404{errBody = "Table does not exist"}
+  copyOrMovePlain dbPath table src dst overwriteMb False
+
+
+{-| MOVE in plain mode = COPY + clear source. The source is set to
+NULL for cells or DELETEd for rows.
+-}
+doMovePlain ::
+  FilePath ->
+  String ->
+  [String] ->
+  Maybe String ->
+  Maybe String ->
+  Handler NoContent
+doMovePlain dbPath tableName rest destinationMb overwriteMb = do
+  src <- case parsePlainTarget rest of
+    Left msg -> throwError err400{errBody = BL.fromStrict (T.encodeUtf8 msg)}
+    Right t -> pure t
+  (_, dst) <- resolvePlainDestination tableName destinationMb
+  when (src == dst) $
+    throwError err403{errBody = "Source and destination are identical"}
+  let table = T.pack tableName
+  tableOk <- liftIO $ tableExists dbPath table
+  unless tableOk $
+    throwError err404{errBody = "Table does not exist"}
+  copyOrMovePlain dbPath table src dst overwriteMb True
+
+
+{-| Shared core for plain-mode COPY/MOVE.
+
+@isMove@ controls whether the source is cleared after the
+destination is written.
+-}
+copyOrMovePlain ::
+  FilePath ->
+  Text ->
+  PlainTarget ->
+  PlainTarget ->
+  Maybe String ->
+  Bool ->
+  Handler NoContent
+copyOrMovePlain dbPath table src dst overwriteMb isMove =
+  case (src, dst) of
+    (PlainCell srcRow srcCol, PlainCell dstRow dstCol) -> do
+      ensureColumns [srcCol, dstCol]
+      srcRowOk <- liftIO $ rowExists dbPath table srcRow
+      unless srcRowOk $ throwError err404{errBody = "Source row missing"}
+      dstRowOk <- liftIO $ rowExists dbPath table dstRow
+      unless dstRowOk $ throwError err409{errBody = "Destination row missing"}
+      srcVal <- liftIO $ readCell dbPath table srcRow srcCol
+      value <- case srcVal of
+        Nothing -> throwError err404{errBody = "Source cell missing"}
+        Just v -> pure v
+      dstWasFilled <- do
+        existing <- liftIO $ readCell dbPath table dstRow dstCol
+        pure $ case existing of
+          Just SQLNull -> False
+          Just _ -> True
+          Nothing -> False
+      when (dstWasFilled && not (overwriteAllowed overwriteMb)) $
+        throwError err412{errBody = "Destination cell has content and Overwrite: F"}
+      liftIO $ updateCell dbPath table dstRow dstCol value
+      when isMove $
+        -- For MOVE, clear the source cell. Skipped when the move is
+        -- between the same column in the same row (already prevented
+        -- by the src == dst check above).
+        liftIO $ updateCell dbPath table srcRow srcCol SQLNull
+      when dstWasFilled $ throwError overwroteResponse
+      pure NoContent
+    (PlainRow srcRow, PlainRow dstRow) -> do
+      srcRowOk <- liftIO $ rowExists dbPath table srcRow
+      unless srcRowOk $ throwError err404{errBody = "Source row missing"}
+      dstRowOk <- liftIO $ rowExists dbPath table dstRow
+      when (dstRowOk && not (overwriteAllowed overwriteMb)) $
+        throwError err412{errBody = "Destination row exists and Overwrite: F"}
+      liftIO $ cloneRow dbPath table srcRow dstRow
+      when isMove $
+        liftIO $ deleteRow dbPath table srcRow
+      when dstRowOk $ throwError overwroteResponse
+      pure NoContent
+    _ ->
+      throwError
+        err403{errBody = "Plain COPY/MOVE requires matching shapes"}
+  where
+    ensureColumns cols = do
+      knownCols <- liftIO $ listColumnNames dbPath table
+      let missing = filter (`notElem` knownCols) cols
+      unless (null missing) $
+        throwError err404{errBody = "Unknown column in path"}
+
+
 -- Locks are not tracked; the fake token only satisfies clients
 -- (e.g. macOS Finder) that require LOCK before issuing a PUT.
 fakeLockToken :: String
@@ -410,41 +571,83 @@ doPut dbPath urlPath body = do
     tableName : rest@(_ : _) -> do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
-        then do
-          let archive = SQLAR.archivePath rest
-          -- RFC 4918 §9.7.1: PUT requires the parent collection to exist.
-          parentOk <-
-            liftIO $ SQLAR.parentExists dbPath (T.pack tableName) archive
-          unless parentOk $
-            throwError err409{errBody = "Parent collection does not exist"}
-          -- A PUT onto an existing collection is not meaningful for a file.
-          existing <-
-            liftIO $ SQLAR.resolvePath dbPath (T.pack tableName) archive
-          case existing of
-            Just e
-              | SQLAR.entryType e == Folder ->
-                  throwError err405{errBody = "Path is a collection"}
-            _ -> pure ()
-          now <- liftIO getPOSIXTime
-          let
-            -- 0o100644 == regular file with 0644 perms
-            mode :: Integer
-            mode = 0o100644
-          liftIO $
-            SQLAR.insertEntry
-              dbPath
-              (T.pack tableName)
-              archive
-              (fromInteger mode)
-              (truncate now)
-              body
-          pure NoContent
-        else do
-          traceM $ "put " ++ show body ++ " into " ++ show urlPath
-          pure NoContent
-    _ -> do
-      traceM $ "put " ++ show body ++ " into " ++ show urlPath
+        then doPutSqlar dbPath tableName rest body
+        else doPutPlain dbPath tableName rest body
+    _ ->
+      throwError err405{errBody = "PUT requires a file path"}
+
+
+doPutSqlar :: FilePath -> String -> [String] -> ByteString -> Handler NoContent
+doPutSqlar dbPath tableName rest body = do
+  let archive = SQLAR.archivePath rest
+  -- RFC 4918 §9.7.1: PUT requires the parent collection to exist.
+  parentOk <-
+    liftIO $ SQLAR.parentExists dbPath (T.pack tableName) archive
+  unless parentOk $
+    throwError err409{errBody = "Parent collection does not exist"}
+  -- A PUT onto an existing collection is not meaningful for a file.
+  existing <-
+    liftIO $ SQLAR.resolvePath dbPath (T.pack tableName) archive
+  case existing of
+    Just e
+      | SQLAR.entryType e == Folder ->
+          throwError err405{errBody = "Path is a collection"}
+    _ -> pure ()
+  now <- liftIO getPOSIXTime
+  let
+    -- 0o100644 == regular file with 0644 perms
+    mode :: Integer
+    mode = 0o100644
+  liftIO $
+    SQLAR.insertEntry
+      dbPath
+      (T.pack tableName)
+      archive
+      (fromInteger mode)
+      (truncate now)
+      body
+  pure NoContent
+
+
+{-| PUT in plain mode writes a single cell. Only the cell shape
+@/table/rowid/col.ext@ is supported; other depths are rejected
+because the row/column model has no analogue for nested files.
+-}
+doPutPlain ::
+  FilePath ->
+  String ->
+  [String] ->
+  ByteString ->
+  Handler NoContent
+doPutPlain dbPath tableName rest body = do
+  case rest & filter (/= "") of
+    [rowidStr, colNameWithExt] -> do
+      tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
+      unless tableOk $
+        throwError err404{errBody = "Table does not exist"}
+      rowid <- case readMaybe rowidStr of
+        Nothing -> throwError err400{errBody = "Invalid rowid"}
+        Just r -> pure r
+      let colName = T.pack (dropExtension colNameWithExt)
+      colOk <- liftIO $ columnExists dbPath (T.pack tableName) colName
+      unless colOk $
+        throwError err404{errBody = "Column does not exist"}
+      rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
+      unless rowOk $
+        throwError err409{errBody = "Row does not exist"}
+      wasNull <- liftIO $ cellIsNull dbPath (T.pack tableName) rowid colName
+      liftIO $
+        updateCell
+          dbPath
+          (T.pack tableName)
+          rowid
+          colName
+          (SQLBlob body)
+      unless wasNull $ throwError overwroteResponse
       pure NoContent
+    _ ->
+      throwError
+        err405{errBody = "Plain-table PUT requires /table/rowid/col"}
 
 
 dataToContentType :: SQLData -> IO BL.ByteString
@@ -481,10 +684,21 @@ doGet dbPath urlPath = do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
         then doGetSqlar dbPath tableName rest
-        else case rest of
-          rowidStr : colNameWithExt : _rest ->
-            doGetCell dbPath tableName rowidStr colNameWithExt
-          _ -> throwError err404
+        else do
+          -- Probing a non-existent table would otherwise crash with a
+          -- SQLite "no such table" exception; report 404 instead.
+          tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
+          unless tableOk $
+            throwError err404{errBody = "Table not found"}
+          case rest of
+            rowidStr : colNameWithExt : _rest -> do
+              let colName = T.pack (dropExtension colNameWithExt)
+              colOk <-
+                liftIO $ columnExists dbPath (T.pack tableName) colName
+              unless colOk $
+                throwError err404{errBody = "Column not found"}
+              doGetCell dbPath tableName rowidStr colNameWithExt
+            _ -> throwError err404
     _ ->
       throwError err404
 
@@ -582,37 +796,80 @@ doDelete :: FilePath -> [String] -> Handler NoContent
 doDelete dbPath urlPath = do
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
-    tableName : rest@(_ : _) -> do
+    tableName : rest -> do
       isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
       if isSqlar
-        then do
-          let archive = SQLAR.archivePath rest
-          exists <- liftIO $ SQLAR.hasPath dbPath (T.pack tableName) archive
-          unless exists $
-            throwError err404{errBody = "Path not found in archive"}
-          liftIO $ SQLAR.deleteSubtree dbPath (T.pack tableName) archive
-          pure NoContent
-        else case rest of
-          rowidStr : colNameWithExt : _rest ->
-            case readMaybe rowidStr of
-              Nothing ->
-                throwError err400{errBody = "Invalid rowid"}
-              Just (rowid :: Integer) -> do
-                let
-                  colName = dropExtension colNameWithExt
-                  sqlQuery =
-                    Query $
-                      "UPDATE "
-                        <> quoteKeyword (T.pack tableName)
-                        <> " SET "
-                        <> quoteKeyword (T.pack colName)
-                        <> " = NULL WHERE rowid == ?"
-                liftIO $ withConnection dbPath $ \conn ->
-                  execute conn sqlQuery (Only rowid)
-                pure NoContent
-          _ -> throwError err404
+        then doDeleteSqlar dbPath tableName rest
+        else doDeletePlain dbPath tableName rest
     _ ->
-      throwError err404
+      throwError err403{errBody = "Cannot DELETE the database root"}
+
+
+doDeleteSqlar :: FilePath -> String -> [String] -> Handler NoContent
+doDeleteSqlar dbPath tableName rest = do
+  let archive = SQLAR.archivePath rest
+  case rest & filter (/= "") of
+    [] -> do
+      -- DELETE on the sqlar table itself drops it.
+      tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
+      unless tableOk $
+        throwError err404{errBody = "Table does not exist"}
+      liftIO $ dropTable dbPath (T.pack tableName)
+      pure NoContent
+    _ -> do
+      exists <- liftIO $ SQLAR.hasPath dbPath (T.pack tableName) archive
+      unless exists $
+        throwError err404{errBody = "Path not found in archive"}
+      liftIO $ SQLAR.deleteSubtree dbPath (T.pack tableName) archive
+      pure NoContent
+
+
+{-| DELETE in plain mode dispatches by URL depth:
+
+  * one segment (@/table/@) drops the table;
+  * two segments (@/table/rowid@) deletes the row;
+  * three segments (@/table/rowid/col@) sets the cell to NULL.
+-}
+doDeletePlain :: FilePath -> String -> [String] -> Handler NoContent
+doDeletePlain dbPath tableName rest =
+  case rest & filter (/= "") of
+    [] -> do
+      tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
+      unless tableOk $
+        throwError err404{errBody = "Table does not exist"}
+      liftIO $ dropTable dbPath (T.pack tableName)
+      pure NoContent
+    [rowidStr] -> do
+      tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
+      unless tableOk $
+        throwError err404{errBody = "Table does not exist"}
+      rowid <- case readMaybe rowidStr of
+        Nothing -> throwError err400{errBody = "Invalid rowid"}
+        Just r -> pure r
+      rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
+      unless rowOk $
+        throwError err404{errBody = "Row does not exist"}
+      liftIO $ deleteRow dbPath (T.pack tableName) rowid
+      pure NoContent
+    [rowidStr, colNameWithExt] -> do
+      tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
+      unless tableOk $
+        throwError err404{errBody = "Table does not exist"}
+      let colName = T.pack (dropExtension colNameWithExt)
+      colOk <- liftIO $ columnExists dbPath (T.pack tableName) colName
+      unless colOk $
+        throwError err404{errBody = "Column does not exist"}
+      rowid <- case readMaybe rowidStr of
+        Nothing -> throwError err400{errBody = "Invalid rowid"}
+        Just r -> pure r
+      rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
+      unless rowOk $
+        throwError err404{errBody = "Row does not exist"}
+      liftIO $
+        updateCell dbPath (T.pack tableName) rowid colName SQLNull
+      pure NoContent
+    _ ->
+      throwError err404{errBody = "Path does not exist"}
 
 
 doMkCol ::
@@ -631,20 +888,35 @@ doMkCol dbPath urlPath contentLengthMb = do
     _ -> pure ()
   let urlPathNorm = urlPath & filter (/= "")
   case urlPathNorm of
-    tableName : rest@(_ : _) -> do
-      isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
-      if isSqlar
-        then doMkColSqlar dbPath tableName rest
+    [] ->
+      throwError err405{errBody = "Cannot MKCOL on the database root"}
+    tableName : rest -> do
+      tableOk <- liftIO $ tableExists dbPath (T.pack tableName)
+      if not tableOk
+        then case rest & filter (/= "") of
+          [] -> do
+            -- /newtable/ : create the table itself (as a sqlar archive
+            -- so subsequent MKCOL/PUT/COPY/MOVE under it work).
+            liftIO $ createSqlarTable dbPath (T.pack tableName)
+            pure NoContent
+          _ ->
+            -- Parent table does not exist; ancestors must per RFC 4918.
+            throwError err409{errBody = "Parent table does not exist"}
         else do
-          traceM $ show urlPath ++ " collection created"
-          pure NoContent
-    _ -> do
-      traceM $ show urlPath ++ " collection created"
-      pure NoContent
+          isSqlar <- liftIO $ SQLAR.isSqlarTable dbPath (T.pack tableName)
+          if isSqlar
+            then doMkColSqlar dbPath tableName rest
+            else doMkColPlain dbPath tableName rest
 
 
 doMkColSqlar :: FilePath -> String -> [String] -> Handler NoContent
 doMkColSqlar dbPath tableName rest = do
+  case rest & filter (/= "") of
+    [] ->
+      -- The table itself already exists, so the table-level MKCOL
+      -- must be rejected (405).
+      throwError err405{errBody = "Resource already exists"}
+    _ -> pure ()
   let archive = SQLAR.archivePath rest
   -- RFC 4918 §9.3.1: the parent must exist (otherwise 409).
   parentOk <- liftIO $ SQLAR.parentExists dbPath (T.pack tableName) archive
@@ -668,6 +940,36 @@ doMkColSqlar dbPath tableName rest = do
       (truncate now)
       ByteString.empty
   pure NoContent
+
+
+{-| MKCOL in plain mode either drops into 405 (the table already
+exists) or inserts a row at a requested rowid. Cell-level MKCOL is
+refused because cells aren't collections.
+-}
+doMkColPlain :: FilePath -> String -> [String] -> Handler NoContent
+doMkColPlain dbPath tableName rest =
+  case rest & filter (/= "") of
+    [] ->
+      throwError err405{errBody = "Table already exists"}
+    [rowidStr] -> do
+      rowid <- case readMaybe rowidStr of
+        Nothing -> throwError err400{errBody = "Invalid rowid"}
+        Just r -> pure r
+      rowOk <- liftIO $ rowExists dbPath (T.pack tableName) rowid
+      when rowOk $
+        throwError err405{errBody = "Row already exists"}
+      inserted <- liftIO $ insertEmptyRow dbPath (T.pack tableName) rowid
+      unless inserted $
+        throwError
+          err409
+            { errBody =
+                "NOT NULL constraint blocks the insert; "
+                  <> "use PUT to populate columns first"
+            }
+      pure NoContent
+    _ ->
+      throwError
+        err403{errBody = "MKCOL is not defined for cells in plain tables"}
 
 
 propNameToEntry ::
@@ -1205,3 +1507,189 @@ quoteKeyword keyword =
   keyword
     & escDoubleQuotes
     & (\word -> "\"" <> word <> "\"")
+
+
+-- Plain-table helpers --------------------------------------------------------
+-- These power the non-sqlar WebDAV code paths.
+
+tableExists :: FilePath -> Text -> IO Bool
+tableExists dbPath name =
+  withConnection dbPath $ \conn -> do
+    rows :: [Only Int] <-
+      query
+        conn
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1"
+        (Only name)
+    pure $ not (null rows)
+
+
+listColumnNames :: FilePath -> Text -> IO [Text]
+listColumnNames dbPath name =
+  withConnection dbPath $ \conn -> do
+    cols :: [Only Text] <-
+      query
+        conn
+        "SELECT name FROM pragma_table_info(?)"
+        (Only name)
+    pure $ fmap (\(Only n) -> n) cols
+
+
+columnExists :: FilePath -> Text -> Text -> IO Bool
+columnExists dbPath tableName colName = do
+  cols <- listColumnNames dbPath tableName
+  pure (colName `elem` cols)
+
+
+rowExists :: FilePath -> Text -> Integer -> IO Bool
+rowExists dbPath tableName rowid =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "SELECT 1 FROM "
+              <> quoteKeyword tableName
+              <> " WHERE rowid = ? LIMIT 1"
+    rows :: [Only Int] <- query conn q (Only rowid)
+    pure $ not (null rows)
+
+
+-- | True when the cell at (table, rowid, col) is currently NULL.
+-- Used to choose between 201 (new content) and 204 (overwrite) on PUT.
+cellIsNull :: FilePath -> Text -> Integer -> Text -> IO Bool
+cellIsNull dbPath tableName rowid colName =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "SELECT "
+              <> quoteKeyword colName
+              <> " FROM "
+              <> quoteKeyword tableName
+              <> " WHERE rowid = ? LIMIT 1"
+    rows :: [Only SQLData] <- query conn q (Only rowid)
+    pure $ case rows of
+      [Only SQLNull] -> True
+      _ -> False
+
+
+-- | Read a single cell value (Nothing when the row/column does not exist).
+readCell ::
+  FilePath ->
+  Text ->
+  Integer ->
+  Text ->
+  IO (Maybe SQLData)
+readCell dbPath tableName rowid colName =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "SELECT "
+              <> quoteKeyword colName
+              <> " FROM "
+              <> quoteKeyword tableName
+              <> " WHERE rowid = ? LIMIT 1"
+    rows :: [Only SQLData] <- query conn q (Only rowid)
+    pure $ case rows of
+      [Only v] -> Just v
+      _ -> Nothing
+
+
+updateCell ::
+  FilePath ->
+  Text ->
+  Integer ->
+  Text ->
+  SQLData ->
+  IO ()
+updateCell dbPath tableName rowid colName value =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "UPDATE "
+              <> quoteKeyword tableName
+              <> " SET "
+              <> quoteKeyword colName
+              <> " = ? WHERE rowid = ?"
+    execute conn q (value, rowid)
+
+
+dropTable :: FilePath -> Text -> IO ()
+dropTable dbPath tableName =
+  withConnection dbPath $ \conn -> do
+    let q = Query $ "DROP TABLE " <> quoteKeyword tableName
+    execute conn q ()
+
+
+deleteRow :: FilePath -> Text -> Integer -> IO ()
+deleteRow dbPath tableName rowid =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "DELETE FROM "
+              <> quoteKeyword tableName
+              <> " WHERE rowid = ?"
+    execute conn q (Only rowid)
+
+
+{-| Create a new table with the sqlar schema. This makes the new
+collection immediately usable as a WebDAV folder via the sqlar code
+path — clients can MKCOL/PUT/COPY/MOVE under it without first
+defining a custom schema.
+-}
+createSqlarTable :: FilePath -> Text -> IO ()
+createSqlarTable dbPath tableName =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "CREATE TABLE "
+              <> quoteKeyword tableName
+              <> " ("
+              <> "name TEXT PRIMARY KEY,"
+              <> "mode INT,"
+              <> "mtime INT,"
+              <> "sz INT,"
+              <> "data BLOB"
+              <> ")"
+    execute conn q ()
+
+
+{-| Insert a row at the requested rowid with all other columns set to
+NULL. Returns False (without raising) if a NOT NULL constraint
+without a default value prevents the insert; the caller maps that
+to 409 Conflict.
+-}
+insertEmptyRow :: FilePath -> Text -> Integer -> IO Bool
+insertEmptyRow dbPath tableName rowid =
+  withConnection dbPath $ \conn -> do
+    let q =
+          Query $
+            "INSERT INTO "
+              <> quoteKeyword tableName
+              <> " (rowid) VALUES (?)"
+    catchAll
+      (do execute conn q (Only rowid); pure True)
+      (\_ -> pure False)
+
+
+-- | Clone every column from @srcRowid@ to @dstRowid@ (replacing dst).
+cloneRow :: FilePath -> Text -> Integer -> Integer -> IO ()
+cloneRow dbPath tableName srcRowid dstRowid =
+  withConnection dbPath $ \conn -> do
+    cols :: [Only Text] <-
+      query
+        conn
+        "SELECT name FROM pragma_table_info(?)"
+        (Only tableName)
+    let colNames = fmap (\(Only n) -> n) cols
+        quoted = T.intercalate "," (fmap quoteKeyword colNames)
+        -- INSERT OR REPLACE so an existing dst row is overwritten.
+        insertQ =
+          Query $
+            "INSERT OR REPLACE INTO "
+              <> quoteKeyword tableName
+              <> " (rowid,"
+              <> quoted
+              <> ") SELECT ?, "
+              <> quoted
+              <> " FROM "
+              <> quoteKeyword tableName
+              <> " WHERE rowid = ?"
+    execute conn insertQ (dstRowid, srcRowid)
