@@ -154,6 +154,10 @@ archivePath segments =
 
 {-| List entries directly under @prefix@ (which must end with @/@
 or be empty for the archive root).
+
+Only the metadata columns are projected — the @data@ BLOB is replaced
+with a cheap @data IS NULL@ probe so listing a multi-gigabyte archive
+does not pull every payload into memory (see GitHub issue #14).
 -}
 listAt :: FilePath -> Text -> Text -> IO [SqlarEntry]
 listAt dbPath tableName rawPrefix = do
@@ -161,17 +165,17 @@ listAt dbPath tableName rawPrefix = do
   withConnection dbPath $ \conn -> do
     let q =
           Query $
-            "SELECT name, mode, mtime, sz, data FROM "
+            "SELECT name, mode, mtime, sz, data IS NULL FROM "
               <> quoteIdent tableName
-    rows :: [(Text, SQLData, SQLData, SQLData, SQLData)] <- query_ conn q
+    rows :: [(Text, SQLData, SQLData, SQLData, Bool)] <- query_ conn q
     pure $ dedupe (catMaybes (fmap (rowToEntry prefix) rows))
 
 
 rowToEntry ::
   Text ->
-  (Text, SQLData, SQLData, SQLData, SQLData) ->
+  (Text, SQLData, SQLData, SQLData, Bool) ->
   Maybe SqlarEntry
-rowToEntry prefix (name, modeData, mtimeData, szData, dataCol) =
+rowToEntry prefix (name, modeData, mtimeData, szData, dataIsNull) =
   let
     canonName =
       if T.isSuffixOf "/" name && T.length name > 1
@@ -195,7 +199,7 @@ rowToEntry prefix (name, modeData, mtimeData, szData, dataCol) =
     isExplicitFolder =
       T.isSuffixOf "/" name
         || isDirMode modeData
-        || (sqlIsNull dataCol && szIsZero szData)
+        || (dataIsNull && szIsZero szData)
 
     childType =
       if T.null rest && not isExplicitFolder
@@ -454,11 +458,6 @@ copySubtree dbPath tableName srcPath dstPath =
 
 
 -- Helpers --------------------------------------------------------------------
-
-sqlIsNull :: SQLData -> Bool
-sqlIsNull SQLNull = True
-sqlIsNull _ = False
-
 
 szIsZero :: SQLData -> Bool
 szIsZero (SQLInteger 0) = True

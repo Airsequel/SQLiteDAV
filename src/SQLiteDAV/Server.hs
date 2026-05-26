@@ -27,7 +27,6 @@ import Protolude (
   fromIntegral,
   fromMaybe,
   fst,
-  headMay,
   intercalate,
   lastMay,
   mapM,
@@ -137,7 +136,7 @@ import SQLiteDAV.Properties (
   PropResults (PropResults, itemType, propMissing, propName, props),
  )
 import SQLiteDAV.SQLAR qualified as SQLAR
-import SQLiteDAV.Utils (formatTimestamp, sqlDataToText)
+import SQLiteDAV.Utils (formatTimestamp)
 
 import Data.Time.Clock.POSIX (getPOSIXTime)
 
@@ -1014,21 +1013,20 @@ keepMissingNames itemType propNames =
   in  propNames & filter (`elem` disallowed)
 
 
--- | Get the rows of a table as a list of lists of (col_name, SQLData) pairs
-getTableRows :: FilePath -> Text -> IO [[(Text, SQLData)]]
-getTableRows dbPath tableName =
+{-| Stream just the rowids of a table.
+
+The plain-mode PROPFIND on a table only needs the rowids to build each
+child folder's href, so projecting the full @SELECT *@ would pull every
+column (including BLOBs) into memory — a 5 GiB table OOMs on the first
+listing. See GitHub issue #14.
+-}
+listRowids :: FilePath -> Text -> IO [Integer]
+listRowids dbPath tableName =
   catchAll
     ( withConnection dbPath $ \conn -> do
-        let sqlQuery = Query $ "SELECT rowid, * FROM " <> quoteKeyword tableName
-
-        columns <- withStatement conn sqlQuery $ \stmt -> do
-          numCols <- columnCount stmt
-          let colNums = [0 .. (numCols - 1)]
-          colNums & traverse (columnName stmt)
-
-        tableRows :: [[SQLData]] <- query_ conn sqlQuery
-
-        pure $ tableRows <&> zip columns
+        let sqlQuery = Query $ "SELECT rowid FROM " <> quoteKeyword tableName
+        rows :: [Only Integer] <- query_ conn sqlQuery
+        pure $ fmap (\(Only r) -> r) rows
     )
     (\_ -> pure [])
 
@@ -1095,24 +1093,14 @@ getPropsForTable dbPath urlPath depth propNames tableName = do
 
   ignoreHiddenFiles tableName
 
-  tableRows <- liftIO $ getTableRows dbPath (T.pack tableName)
+  rowids <- liftIO $ listRowids dbPath (T.pack tableName)
 
   let
-    getPropName tableRow =
-      tableName
-        ++ "/"
-        ++ ( tableRow
-               & headMay
-               & fromMaybe ("ERROR", SQLText "ERROR")
-               & snd
-               & sqlDataToText
-               & T.unpack
-           )
     ioTableRows =
-      tableRows
-        <&> ( \tableRow ->
+      rowids
+        <&> ( \rowid ->
                 PropResults
-                  { propName = getPropName tableRow
+                  { propName = tableName ++ "/" ++ show rowid
                   , itemType = Folder
                   , props
                   , propMissing = propNames & keepMissingNames Folder

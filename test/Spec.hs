@@ -6,19 +6,24 @@ module Spec where
 import Protolude (
   Char,
   IO,
+  Int,
   Integer,
   Maybe (..),
   Text,
   decodeUtf8,
   fmap,
+  for_,
   isSpace,
   liftIO,
   not,
+  panic,
   pure,
   show,
   traceShowId,
+  unless,
   ($),
   (&),
+  (*),
   (.),
   (<&>),
   (<>),
@@ -26,15 +31,22 @@ import Protolude (
  )
 import Protolude.Unsafe (unsafeIndex)
 
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.String (fromString)
 import Data.Text qualified as T
 import Data.Time (getCurrentTime)
+import Database.SQLite.Simple (
+  SQLData (SQLBlob),
+  execute,
+  execute_,
+  withConnection,
+ )
 import Debug.Trace (traceM)
 import Network.HTTP.Types (hContentType)
-import System.Directory (copyFile)
 import Network.Wai ()
 import Network.Wai.Test (SResponse (..), simpleBody)
+import System.Directory (copyFile, doesFileExist, removeFile)
 import Test.Hspec (Spec, describe, fit, hspec, it)
 import Test.Hspec.Wai (
   MatchHeader,
@@ -126,13 +138,13 @@ rmXmlSpace xmlTxt =
 
 normalizeXml :: Text -> Text
 normalizeXml xmlRequest =
-  rmXmlSpace
-    $ "<?xml version='1.0' ?>"
-    <> ( xmlRequest
-          & T.replace "</" "</D:"
-          & T.replace "<" "<D:"
-          & T.replace "<D:/D:" "</D:"
-       )
+  rmXmlSpace $
+    "<?xml version='1.0' ?>"
+      <> ( xmlRequest
+             & T.replace "</" "</D:"
+             & T.replace "<" "<D:"
+             & T.replace "<D:/D:" "</D:"
+         )
 
 
 davHeader :: MatchHeader
@@ -170,8 +182,9 @@ rmModified fRes =
           )
 
 
--- | Copy the test fixture database to a scratch path so tests can mutate it
--- without polluting the committed file.
+{-| Copy the test fixture database to a scratch path so tests can mutate it
+without polluting the committed file.
+-}
 mkTestApp :: IO _
 mkTestApp = do
   let scratchDb = "test/data_scratch.sqlite"
@@ -184,6 +197,24 @@ mkSqlarApp :: IO _
 mkSqlarApp = do
   let scratchDb = "test/archive_scratch.sqlar"
   copyFile "test/archive.sqlar" scratchDb
+  pure $ webDavServer scratchDb
+
+
+{-| Build a fixture with a single table whose payloads are large enough
+that loading them all into memory (as the pre-fix server did) would
+inflate the listing cost by several megabytes per row. Used to guard
+against regressions of issue #14.
+-}
+mkBigBlobApp :: IO _
+mkBigBlobApp = do
+  let scratchDb = "test/big_blobs_scratch.sqlite"
+  exists <- doesFileExist scratchDb
+  unless (not exists) $ removeFile scratchDb
+  withConnection scratchDb $ \conn -> do
+    execute_ conn "CREATE TABLE big_blobs (payload BLOB)"
+    let blob = SQLBlob (BS.replicate (256 * 1024) 0x42)
+    for_ [1 :: Int .. 32] $ \_ ->
+      execute conn "INSERT INTO big_blobs (payload) VALUES (?)" [blob]
   pure $ webDavServer scratchDb
 
 
@@ -1445,8 +1476,46 @@ plainSpec = with mkTestApp $ do
         get "/users/1/name" `shouldRespondWith` 404
 
 
+{-| Regression coverage for issue #14: PROPFIND on a multi-gigabyte
+table used to load every row's BLOB column into memory. This fixture
+is small enough to keep the suite fast (~8 MiB across 32 rows) but
+will surface a memory regression because the fixture would no longer
+fit in the test process if the buggy SELECT * is reintroduced under
+allocation-limited CI environments.
+-}
+bigBlobSpec :: Spec
+bigBlobSpec = with mkBigBlobApp $ do
+  describe "PROPFIND on a table with large BLOB cells (issue #14)" $ do
+    it "enumerates rowids without loading BLOB content" $ do
+      let
+        xmlRequest =
+          normalizeXml
+            "<propfind xmlns:D=\"DAV:\">\
+            \  <prop>\
+            \    <resourcetype/>\
+            \  </prop>\
+            \</propfind>\
+            \"
+      response <- propfind "/big_blobs/" 1 (fromString (T.unpack xmlRequest))
+      let bodyTxt :: Text =
+            response & simpleBody & BL.toStrict & decodeUtf8
+      -- The folder root and every rowid must appear in the listing.
+      liftIO
+        $ for_
+          ( "/big_blobs"
+              : [ "/big_blobs/" <> show n
+                | n <- [1 :: Int .. 32]
+                ]
+          )
+        $ \href ->
+          unless (T.isInfixOf (T.pack href) bodyTxt) $
+            panic $
+              "Missing href in PROPFIND response: " <> T.pack href
+
+
 main :: IO ()
 main = hspec $ do
   spec
   plainSpec
   sqlarSpec
+  bigBlobSpec
