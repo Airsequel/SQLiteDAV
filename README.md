@@ -46,6 +46,23 @@ stack install
     (E.g. with macOS Finder by executing `cmd + k`)
 
 
+## WebDAV Compliance
+
+The repository ships a Dockerised setup for running the [Litmus]
+protocol compliance test suite against a local SQLiteDAV instance.
+It points Litmus at an empty sqlar archive so the test files it
+creates do not collide with the committed fixtures.
+
+```sh
+make litmus
+```
+
+The target builds a small container image (Debian + `litmus`),
+starts SQLiteDAV against a scratch database, and runs Litmus
+against `http://host.docker.internal:1234/sqlar/`. Set
+`LITMUS_PORT` to use a different port.
+
+
 ## Roadmap
 
 The next features are implemented based on popular demand.

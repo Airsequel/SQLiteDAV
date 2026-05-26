@@ -4,3 +4,4 @@
 .direnv
 test/data_scratch.sqlite*
 test/archive_scratch.sqlar*
+test/litmus_scratch.sqlar*

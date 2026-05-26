@@ -8,6 +8,11 @@ test:
 	stack test
 
 
+.PHONY: litmus
+litmus:
+	./litmus/run.sh
+
+
 .PHONY: install
 install:
 	stack install
